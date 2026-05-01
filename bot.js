@@ -118,19 +118,28 @@ async function scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, priceCeiling)
     const yesBestAsk = parseFloat(yesBook.asks[0]?.price);
     const noBestAsk  = parseFloat(noBook.asks[0]?.price);
 
-    if (yesBestAsk <= priceCeiling) {
+    const yesValid = Number.isFinite(yesBestAsk) && yesBestAsk <= priceCeiling;
+    const noValid  = Number.isFinite(noBestAsk) && noBestAsk <= priceCeiling;
+
+    const candidates = [];
+
+    if (yesValid) {
         const liq = checkLiquidity(yesBook, yesBestAsk);
-        if (liq.ok) return { side: 'YES', bestAsk: yesBestAsk, liq };
-        return { side: 'YES', rejected: true, reason: liq.reason, bestAsk: yesBestAsk };
+        if (liq.ok) candidates.push({ side: 'YES', bestAsk: yesBestAsk, liq });
+        else return { side: 'YES', rejected: true, reason: liq.reason, bestAsk: yesBestAsk };
     }
 
-    if (noBestAsk <= priceCeiling) {
+    if (noValid) {
         const liq = checkLiquidity(noBook, noBestAsk);
-        if (liq.ok) return { side: 'NO', bestAsk: noBestAsk, liq };
-        return { side: 'NO', rejected: true, reason: liq.reason, bestAsk: noBestAsk };
+        if (liq.ok) candidates.push({ side: 'NO', bestAsk: noBestAsk, liq });
+        else return { side: 'NO', rejected: true, reason: liq.reason, bestAsk: noBestAsk };
     }
 
-    return null;
+    if (!candidates.length) return null;
+
+    // pick the cheaper of the two (if both qualify)
+    candidates.sort((a, b) => a.bestAsk - b.bestAsk);
+    return candidates[0];
 }
 
 // ─────────────────────────────────────────────────────────
@@ -183,6 +192,7 @@ async function runPaperTrader() {
     let YES_TOKEN_ID  = null;
     let NO_TOKEN_ID   = null;
     let currentMarket = null;
+    let marketEndTime = null;
 
     let position1  = null;
     let position2  = null;
@@ -201,10 +211,13 @@ async function runPaperTrader() {
         YES_TOKEN_ID  = tokens.yesToken;
         NO_TOKEN_ID   = tokens.noToken;
         currentMarket = tokens.question;
+        marketEndTime = new Date(tokens.endDate).getTime();
 
         position1 = position2 = null;
         grace1    = grace2    = false;
-        secondsLeft = 220;
+
+        const now = Date.now();
+        secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
         console.log(`\n[MARKET] Loaded: ${currentMarket}`);
         console.log(`  YES token: ${YES_TOKEN_ID}`);
@@ -227,7 +240,11 @@ async function runPaperTrader() {
             // No market loaded yet — wait
             if (!YES_TOKEN_ID) return;
 
-            secondsLeft--;
+            if (marketEndTime) {
+                secondsLeft = Math.max(0, Math.floor((marketEndTime - Date.now()) / 1000));
+            } else {
+                secondsLeft--;
+            }
 
             // ── MARKET EXPIRED — load the next one ──
             if (secondsLeft <= 0) {
@@ -288,6 +305,11 @@ async function runPaperTrader() {
                 const orderbook = await clobClient.getOrderBook(pos.tokenId);
                 const bestBid   = parseFloat(orderbook.bids[0]?.price);
 
+                if (!Number.isFinite(bestBid)) {
+                    process.stdout.write(`\r[S${pos.slot}] No bid data yet...   `);
+                    continue;
+                }
+
                 // 2-min grace notification
                 if (secondsLeft <= TWO_MIN_MARK && !getGrace()) {
                     setGrace(true);
@@ -322,7 +344,7 @@ async function runPaperTrader() {
             }
 
         } catch (err) {
-            // Absorb API stutters silently
+            console.error('[ERROR]', err?.message || err);
         }
     }, 1000);
 }
