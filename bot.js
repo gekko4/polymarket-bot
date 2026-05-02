@@ -44,8 +44,6 @@ function logTrade(tradeData) {
 
 // ─────────────────────────────────────────────────────────
 // MARKET DISCOVERY
-// Finds the currently active BTC 5-min market and returns
-// its YES and NO token IDs automatically — no hardcoding
 // ─────────────────────────────────────────────────────────
 async function getActiveMarketTokens(clobClient) {
     const markets = await clobClient.getMarkets();
@@ -59,7 +57,6 @@ async function getActiveMarketTokens(clobClient) {
 
     if (!btcMarkets.length) return null;
 
-    // Pick the market closest to expiry (most urgent / currently running)
     const sorted = btcMarkets.sort((a, b) =>
         new Date(a.end_date_iso) - new Date(b.end_date_iso)
     );
@@ -80,10 +77,8 @@ async function getActiveMarketTokens(clobClient) {
 
 // ─────────────────────────────────────────────────────────
 // LIQUIDITY CHECK
-// Checks spread, ask-side fill depth, and viable bid depth
 // ─────────────────────────────────────────────────────────
 function checkLiquidity(orderbook, entryPrice) {
-    // FIX #1: Validate orderbook structure exists
     if (!orderbook || !Array.isArray(orderbook.asks) || !Array.isArray(orderbook.bids)) {
         return { ok: false, reason: "Invalid orderbook structure" };
     }
@@ -136,10 +131,15 @@ function checkLiquidity(orderbook, entryPrice) {
 
 // ─────────────────────────────────────────────────────────
 // SCAN BOTH SIDES
-// Returns whichever side (YES/NO) qualifies under priceCeiling
+//
+// sideFilter (optional): 'YES' | 'NO'
+//   When provided, only that side is evaluated. Used to enforce
+//   same-direction rule — both slots must trade the same side.
+//
+// FIX: Each side is evaluated independently. A liquidity failure
+//   on one side no longer blocks the other side from being checked.
 // ─────────────────────────────────────────────────────────
-async function scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, priceCeiling) {
-    // FIX #2: Add try-catch around API calls
+async function scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, priceCeiling, sideFilter = null) {
     let yesBook, noBook;
     try {
         [yesBook, noBook] = await Promise.all([
@@ -151,39 +151,57 @@ async function scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, priceCeiling)
         return null;
     }
 
-    // FIX #3: Validate orderbook structure and array indices
-    if (!yesBook || !Array.isArray(yesBook.asks) || yesBook.asks.length === 0) {
-        return { side: 'YES', rejected: true, reason: 'Invalid YES orderbook', bestAsk: NaN };
-    }
-    if (!noBook || !Array.isArray(noBook.asks) || noBook.asks.length === 0) {
-        return { side: 'NO', rejected: true, reason: 'Invalid NO orderbook', bestAsk: NaN };
-    }
+    const candidates  = [];
+    const rejections  = [];
 
-    const yesBestAsk = parseFloat(yesBook.asks[0].price);
-    const noBestAsk  = parseFloat(noBook.asks[0].price);
-
-    const yesValid = Number.isFinite(yesBestAsk) && yesBestAsk <= priceCeiling;
-    const noValid  = Number.isFinite(noBestAsk) && noBestAsk <= priceCeiling;
-
-    const candidates = [];
-
-    if (yesValid) {
-        const liq = checkLiquidity(yesBook, yesBestAsk);
-        if (liq.ok) candidates.push({ side: 'YES', bestAsk: yesBestAsk, liq });
-        else return { side: 'YES', rejected: true, reason: liq.reason, bestAsk: yesBestAsk };
-    }
-
-    if (noValid) {
-        const liq = checkLiquidity(noBook, noBestAsk);
-        if (liq.ok) candidates.push({ side: 'NO', bestAsk: noBestAsk, liq });
-        else return { side: 'NO', rejected: true, reason: liq.reason, bestAsk: noBestAsk };
+    // ── YES side ──────────────────────────────────────────
+    // Skip entirely if caller locked us to NO only
+    if (!sideFilter || sideFilter === 'YES') {
+        if (!yesBook || !Array.isArray(yesBook.asks) || yesBook.asks.length === 0) {
+            rejections.push({ side: 'YES', reason: 'Invalid / empty YES orderbook', bestAsk: NaN });
+        } else {
+            const yesBestAsk = parseFloat(yesBook.asks[0].price);
+            if (Number.isFinite(yesBestAsk) && yesBestAsk <= priceCeiling) {
+                const liq = checkLiquidity(yesBook, yesBestAsk);
+                if (liq.ok) {
+                    candidates.push({ side: 'YES', bestAsk: yesBestAsk, liq });
+                } else {
+                    rejections.push({ side: 'YES', reason: liq.reason, bestAsk: yesBestAsk });
+                }
+            }
+        }
     }
 
-    if (!candidates.length) return null;
+    // ── NO side ───────────────────────────────────────────
+    // Skip entirely if caller locked us to YES only
+    if (!sideFilter || sideFilter === 'NO') {
+        if (!noBook || !Array.isArray(noBook.asks) || noBook.asks.length === 0) {
+            rejections.push({ side: 'NO', reason: 'Invalid / empty NO orderbook', bestAsk: NaN });
+        } else {
+            const noBestAsk = parseFloat(noBook.asks[0].price);
+            if (Number.isFinite(noBestAsk) && noBestAsk <= priceCeiling) {
+                const liq = checkLiquidity(noBook, noBestAsk);
+                if (liq.ok) {
+                    candidates.push({ side: 'NO', bestAsk: noBestAsk, liq });
+                } else {
+                    rejections.push({ side: 'NO', reason: liq.reason, bestAsk: noBestAsk });
+                }
+            }
+        }
+    }
 
-    // pick the cheaper of the two (if both qualify)
-    candidates.sort((a, b) => a.bestAsk - b.bestAsk);
-    return candidates[0];
+    // Return the cheaper qualifying side (if any)
+    if (candidates.length) {
+        candidates.sort((a, b) => a.bestAsk - b.bestAsk);
+        return candidates[0];
+    }
+
+    // No candidate — surface the most relevant rejection for logging
+    if (rejections.length) {
+        return { ...rejections[0], rejected: true };
+    }
+
+    return null; // Nothing in range
 }
 
 // ─────────────────────────────────────────────────────────
@@ -244,12 +262,10 @@ async function runPaperTrader() {
     let grace2     = false;
     let secondsLeft = 0;
 
-    // FIX #4: Add lock to prevent concurrent market loading
     let isLoadingMarket = false;
 
     // ── MARKET LOADER ──
     async function loadMarket() {
-        // Prevent concurrent loads
         if (isLoadingMarket) return false;
         isLoadingMarket = true;
 
@@ -268,7 +284,6 @@ async function runPaperTrader() {
             position1 = position2 = null;
             grace1    = grace2    = false;
 
-            // FIX #5: Always use Date.now() for accurate timing
             const now = Date.now();
             secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
@@ -282,7 +297,6 @@ async function runPaperTrader() {
         }
     }
 
-    // Boot — load first market before starting the tick loop
     const loaded = await loadMarket();
     if (!loaded) {
         console.log('[BOOT] No market available on boot. Will retry every 30s.');
@@ -293,10 +307,8 @@ async function runPaperTrader() {
 
     setInterval(async () => {
         try {
-            // No market loaded yet — wait
             if (!YES_TOKEN_ID) return;
 
-            // FIX #5: Always calculate from marketEndTime, never decrement
             if (marketEndTime) {
                 const now = Date.now();
                 secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
@@ -305,8 +317,7 @@ async function runPaperTrader() {
             // ── MARKET EXPIRED — load the next one ──
             if (secondsLeft <= 0) {
                 console.log('\n[MARKET] Timer expired — searching for next market...');
-                
-                // FIX #6: Log abandoned positions cleanly
+
                 if (position1) {
                     logTrade({
                         event: 'MARKET_EXPIRED',
@@ -337,22 +348,32 @@ async function runPaperTrader() {
                 return;
             }
 
-            // ── ENTRY WINDOW ──
+            // ── ENTRY WINDOW ──────────────────────────────────────────────
             if (secondsLeft >= ENTRY_TIME) {
 
-                // Slot 1 — enter at <= $0.35
+                // ── SLOT 1 ────────────────────────────────────────────────
+                // Re-entry is allowed after a TP exit (position1 becomes null).
+                // If slot 2 is still open from a previous cycle, lock slot 1
+                // to the same side so we never hold opposing directions.
                 if (!position1) {
-                    const scan = await scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, ENTRY_PRICE_MAX);
+                    // FIX: enforce same side as slot 2 when slot 2 is open
+                    const sideFilter = position2 ? position2.side : null;
+
+                    const scan = await scanForEntry(
+                        clobClient, YES_TOKEN_ID, NO_TOKEN_ID,
+                        ENTRY_PRICE_MAX,
+                        sideFilter   // null = free to pick either side
+                    );
+
                     if (!scan) {
-                        process.stdout.write(`\r[SCAN S1] Time: ${secondsLeft}s | No setup at <= $${ENTRY_PRICE_MAX}   `);
+                        process.stdout.write(`\r[SCAN S1] Time: ${secondsLeft}s | No setup at <= $${ENTRY_PRICE_MAX}${sideFilter ? ` (${sideFilter} only)` : ''}   `);
                     } else if (scan.rejected) {
                         process.stdout.write(`\r[SCAN S1] Time: ${secondsLeft}s | ${scan.side} $${scan.bestAsk} — LIQ FAIL: ${scan.reason}   `);
                     } else {
                         position1 = buildPosition(scan, 1, YES_TOKEN_ID, NO_TOKEN_ID);
                         console.log(`\n[SLOT 1 ENTRY] ${position1.side} | Entry: $${position1.entryPrice} | TP: $${position1.takeProfit} | Shares: ${position1.shares.toFixed(4)} | Time: ${secondsLeft}s`);
                         console.log(`[LIQ] Spread: ${scan.liq.stats.spreadPct}% | Ask: ${scan.liq.stats.askDepth} | Bids: ${scan.liq.stats.viableBidDepth} | Vol: ${scan.liq.stats.totalVol}`);
-                        
-                        // Log entry to file
+
                         logTrade({
                             event: 'ENTRY',
                             slot: 1,
@@ -365,17 +386,25 @@ async function runPaperTrader() {
                     }
                 }
 
-                // Slot 2 — only opens if:
-                //   a) slot 1 is already filled
-                //   b) price has dropped further to <= $0.25
-                //   c) price is strictly lower than slot 1 entry (no double-entry at same level)
+                // ── SLOT 2 ────────────────────────────────────────────────
+                // Opens only when:
+                //   a) slot 1 is already filled (position1 is not null)
+                //   b) slot 2 is not already filled (re-entry allowed after TP)
+                //   c) best ask has dropped strictly below slot 1 entry
+                //   d) best ask is within the $0.25 ceiling
+                //   e) SAME SIDE as slot 1 (sideFilter = position1.side)
                 if (position1 && !position2) {
-                    const scan = await scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, ENTRY_PRICE_SECOND);
+                    const scan = await scanForEntry(
+                        clobClient, YES_TOKEN_ID, NO_TOKEN_ID,
+                        ENTRY_PRICE_SECOND,
+                        position1.side   // FIX: always lock to slot 1's side
+                    );
+
                     if (scan && !scan.rejected && scan.bestAsk < position1.entryPrice) {
                         position2 = buildPosition(scan, 2, YES_TOKEN_ID, NO_TOKEN_ID);
                         console.log(`\n[SLOT 2 ENTRY] ${position2.side} | Entry: $${position2.entryPrice} | TP: $${position2.takeProfit} | Shares: ${position2.shares.toFixed(4)} | Time: ${secondsLeft}s`);
-                        
-                        // Log entry to file
+                        console.log(`[LIQ] Spread: ${scan.liq.stats.spreadPct}% | Ask: ${scan.liq.stats.askDepth} | Bids: ${scan.liq.stats.viableBidDepth} | Vol: ${scan.liq.stats.totalVol}`);
+
                         logTrade({
                             event: 'ENTRY',
                             slot: 2,
@@ -393,7 +422,7 @@ async function runPaperTrader() {
                     process.stdout.write(`\rEntry window closed. Time: ${secondsLeft}s   `);
             }
 
-            // ── EXIT — checked every tick for each open slot ──
+            // ── EXIT — checked every tick for each open slot ──────────────
             for (const [getPos, setPos, getGrace, setGrace] of [
                 [() => position1, p => { position1 = p; }, () => grace1, v => { grace1 = v; }],
                 [() => position2, p => { position2 = p; }, () => grace2, v => { grace2 = v; }]
@@ -401,7 +430,6 @@ async function runPaperTrader() {
                 const pos = getPos();
                 if (!pos) continue;
 
-                // FIX #2: Add try-catch around orderbook fetch
                 let orderbook;
                 try {
                     orderbook = await clobClient.getOrderBook(pos.tokenId);
@@ -410,13 +438,12 @@ async function runPaperTrader() {
                     continue;
                 }
 
-                // FIX #3: Validate orderbook structure
                 if (!orderbook || !Array.isArray(orderbook.bids) || orderbook.bids.length === 0) {
                     process.stdout.write(`\r[S${pos.slot}] No bid data yet...   `);
                     continue;
                 }
 
-                const bestBid   = parseFloat(orderbook.bids[0].price);
+                const bestBid = parseFloat(orderbook.bids[0].price);
 
                 if (!Number.isFinite(bestBid)) {
                     process.stdout.write(`\r[S${pos.slot}] No bid data yet...   `);
@@ -448,7 +475,6 @@ async function runPaperTrader() {
                     console.log(`  Fee       : $${fee.toFixed(4)}`);
                     console.log(`  Net PnL   : $${pnl.toFixed(4)} (${pnlPct}%)\n`);
 
-                    // Log exit to file
                     logTrade({
                         event: 'EXIT',
                         slot: pos.slot,
@@ -464,6 +490,8 @@ async function runPaperTrader() {
                         reason: exit.reason
                     });
 
+                    // Null out the slot — re-entry is now possible next tick
+                    // if the entry window is still open and conditions are met
                     setPos(null);
                     setGrace(false);
                 } else {
@@ -473,4 +501,12 @@ async function runPaperTrader() {
             }
 
         } catch (err) {
-            console.error('[`*
+            console.error('[TICK ERROR]', err?.message || err);
+        }
+    }, 1000);
+}
+
+runPaperTrader().catch(err => {
+    console.error('[FATAL]', err);
+    process.exit(1);
+});
