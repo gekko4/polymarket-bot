@@ -1,4 +1,5 @@
 const { ClobClient } = require('@polymarket/clob-client');
+const fs = require('fs');
 
 // --- STRATEGY CONFIG ---
 const ENTRY_PRICE_MAX        = 0.35;   // Slot 1 ceiling
@@ -17,6 +18,29 @@ const MIN_ASK_DEPTH_MULT     = 3;
 const MIN_BID_DEPTH_MULT     = 5;
 const MIN_VIABLE_BID         = 0.20;
 const MIN_TOTAL_MARKET_VOL   = 50;
+
+// --- TRADE LOGGING ---
+const TRADES_LOG_FILE = 'trades.json';
+
+// ─────────────────────────────────────────────────────────
+// TRADE LOGGING HELPERS
+// ─────────────────────────────────────────────────────────
+function logTrade(tradeData) {
+    try {
+        let trades = [];
+        if (fs.existsSync(TRADES_LOG_FILE)) {
+            const data = fs.readFileSync(TRADES_LOG_FILE, 'utf8');
+            trades = JSON.parse(data);
+        }
+        trades.push({
+            timestamp: new Date().toISOString(),
+            ...tradeData
+        });
+        fs.writeFileSync(TRADES_LOG_FILE, JSON.stringify(trades, null, 2));
+    } catch (err) {
+        console.error('[LOG ERROR]', err.message);
+    }
+}
 
 // ─────────────────────────────────────────────────────────
 // MARKET DISCOVERY
@@ -59,6 +83,11 @@ async function getActiveMarketTokens(clobClient) {
 // Checks spread, ask-side fill depth, and viable bid depth
 // ─────────────────────────────────────────────────────────
 function checkLiquidity(orderbook, entryPrice) {
+    // FIX #1: Validate orderbook structure exists
+    if (!orderbook || !Array.isArray(orderbook.asks) || !Array.isArray(orderbook.bids)) {
+        return { ok: false, reason: "Invalid orderbook structure" };
+    }
+
     const asks = orderbook.asks.map(a => ({ price: parseFloat(a.price), size: parseFloat(a.size) }));
     const bids = orderbook.bids.map(b => ({ price: parseFloat(b.price), size: parseFloat(b.size) }));
 
@@ -110,13 +139,28 @@ function checkLiquidity(orderbook, entryPrice) {
 // Returns whichever side (YES/NO) qualifies under priceCeiling
 // ─────────────────────────────────────────────────────────
 async function scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, priceCeiling) {
-    const [yesBook, noBook] = await Promise.all([
-        clobClient.getOrderBook(YES_TOKEN_ID),
-        clobClient.getOrderBook(NO_TOKEN_ID)
-    ]);
+    // FIX #2: Add try-catch around API calls
+    let yesBook, noBook;
+    try {
+        [yesBook, noBook] = await Promise.all([
+            clobClient.getOrderBook(YES_TOKEN_ID),
+            clobClient.getOrderBook(NO_TOKEN_ID)
+        ]);
+    } catch (err) {
+        console.error('[SCAN ERROR] Failed to fetch orderbooks:', err?.message || err);
+        return null;
+    }
 
-    const yesBestAsk = parseFloat(yesBook.asks[0]?.price);
-    const noBestAsk  = parseFloat(noBook.asks[0]?.price);
+    // FIX #3: Validate orderbook structure and array indices
+    if (!yesBook || !Array.isArray(yesBook.asks) || yesBook.asks.length === 0) {
+        return { side: 'YES', rejected: true, reason: 'Invalid YES orderbook', bestAsk: NaN };
+    }
+    if (!noBook || !Array.isArray(noBook.asks) || noBook.asks.length === 0) {
+        return { side: 'NO', rejected: true, reason: 'Invalid NO orderbook', bestAsk: NaN };
+    }
+
+    const yesBestAsk = parseFloat(yesBook.asks[0].price);
+    const noBestAsk  = parseFloat(noBook.asks[0].price);
 
     const yesValid = Number.isFinite(yesBestAsk) && yesBestAsk <= priceCeiling;
     const noValid  = Number.isFinite(noBestAsk) && noBestAsk <= priceCeiling;
@@ -198,32 +242,44 @@ async function runPaperTrader() {
     let position2  = null;
     let grace1     = false;
     let grace2     = false;
-    let secondsLeft = 0;   // starts at 0 — loadMarket sets it
+    let secondsLeft = 0;
+
+    // FIX #4: Add lock to prevent concurrent market loading
+    let isLoadingMarket = false;
 
     // ── MARKET LOADER ──
     async function loadMarket() {
-        const tokens = await getActiveMarketTokens(clobClient);
-        if (!tokens) {
-            console.log('[MARKET] No active BTC 5-min market found — retrying in 30s');
-            return false;
+        // Prevent concurrent loads
+        if (isLoadingMarket) return false;
+        isLoadingMarket = true;
+
+        try {
+            const tokens = await getActiveMarketTokens(clobClient);
+            if (!tokens) {
+                console.log('[MARKET] No active BTC 5-min market found — retrying in 30s');
+                return false;
+            }
+
+            YES_TOKEN_ID  = tokens.yesToken;
+            NO_TOKEN_ID   = tokens.noToken;
+            currentMarket = tokens.question;
+            marketEndTime = new Date(tokens.endDate).getTime();
+
+            position1 = position2 = null;
+            grace1    = grace2    = false;
+
+            // FIX #5: Always use Date.now() for accurate timing
+            const now = Date.now();
+            secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
+
+            console.log(`\n[MARKET] Loaded: ${currentMarket}`);
+            console.log(`  YES token: ${YES_TOKEN_ID}`);
+            console.log(`  NO  token: ${NO_TOKEN_ID}`);
+            console.log(`  Expires  : ${tokens.endDate}\n`);
+            return true;
+        } finally {
+            isLoadingMarket = false;
         }
-
-        YES_TOKEN_ID  = tokens.yesToken;
-        NO_TOKEN_ID   = tokens.noToken;
-        currentMarket = tokens.question;
-        marketEndTime = new Date(tokens.endDate).getTime();
-
-        position1 = position2 = null;
-        grace1    = grace2    = false;
-
-        const now = Date.now();
-        secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
-
-        console.log(`\n[MARKET] Loaded: ${currentMarket}`);
-        console.log(`  YES token: ${YES_TOKEN_ID}`);
-        console.log(`  NO  token: ${NO_TOKEN_ID}`);
-        console.log(`  Expires  : ${tokens.endDate}\n`);
-        return true;
     }
 
     // Boot — load first market before starting the tick loop
@@ -240,15 +296,36 @@ async function runPaperTrader() {
             // No market loaded yet — wait
             if (!YES_TOKEN_ID) return;
 
+            // FIX #5: Always calculate from marketEndTime, never decrement
             if (marketEndTime) {
-                secondsLeft = Math.max(0, Math.floor((marketEndTime - Date.now()) / 1000));
-            } else {
-                secondsLeft--;
+                const now = Date.now();
+                secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
             }
 
             // ── MARKET EXPIRED — load the next one ──
             if (secondsLeft <= 0) {
                 console.log('\n[MARKET] Timer expired — searching for next market...');
+                
+                // FIX #6: Log abandoned positions cleanly
+                if (position1) {
+                    logTrade({
+                        event: 'MARKET_EXPIRED',
+                        slot: 1,
+                        side: position1.side,
+                        entryPrice: position1.entryPrice,
+                        status: 'ABANDONED'
+                    });
+                }
+                if (position2) {
+                    logTrade({
+                        event: 'MARKET_EXPIRED',
+                        slot: 2,
+                        side: position2.side,
+                        entryPrice: position2.entryPrice,
+                        status: 'ABANDONED'
+                    });
+                }
+
                 const ok = await loadMarket();
                 if (!ok) {
                     YES_TOKEN_ID = null;
@@ -272,8 +349,20 @@ async function runPaperTrader() {
                         process.stdout.write(`\r[SCAN S1] Time: ${secondsLeft}s | ${scan.side} $${scan.bestAsk} — LIQ FAIL: ${scan.reason}   `);
                     } else {
                         position1 = buildPosition(scan, 1, YES_TOKEN_ID, NO_TOKEN_ID);
+                        // FIX #7: Fix truncated log string — use secondsLeft variable
                         console.log(`\n[SLOT 1 ENTRY] ${position1.side} | Entry: $${position1.entryPrice} | TP: $${position1.takeProfit} | Shares: ${position1.shares.toFixed(4)} | Time: ${secondsLeft}s`);
                         console.log(`[LIQ] Spread: ${scan.liq.stats.spreadPct}% | Ask: ${scan.liq.stats.askDepth} | Bids: ${scan.liq.stats.viableBidDepth} | Vol: ${scan.liq.stats.totalVol}`);
+                        
+                        // Log entry to file
+                        logTrade({
+                            event: 'ENTRY',
+                            slot: 1,
+                            market: currentMarket,
+                            side: position1.side,
+                            entryPrice: position1.entryPrice,
+                            shares: parseFloat(position1.shares.toFixed(4)),
+                            cost: position1.cost
+                        });
                     }
                 }
 
@@ -285,7 +374,19 @@ async function runPaperTrader() {
                     const scan = await scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, ENTRY_PRICE_SECOND);
                     if (scan && !scan.rejected && scan.bestAsk < position1.entryPrice) {
                         position2 = buildPosition(scan, 2, YES_TOKEN_ID, NO_TOKEN_ID);
+                        // FIX #7: Fix truncated log string — use secondsLeft variable
                         console.log(`\n[SLOT 2 ENTRY] ${position2.side} | Entry: $${position2.entryPrice} | TP: $${position2.takeProfit} | Shares: ${position2.shares.toFixed(4)} | Time: ${secondsLeft}s`);
+                        
+                        // Log entry to file
+                        logTrade({
+                            event: 'ENTRY',
+                            slot: 2,
+                            market: currentMarket,
+                            side: position2.side,
+                            entryPrice: position2.entryPrice,
+                            shares: parseFloat(position2.shares.toFixed(4)),
+                            cost: position2.cost
+                        });
                     }
                 }
 
@@ -302,8 +403,22 @@ async function runPaperTrader() {
                 const pos = getPos();
                 if (!pos) continue;
 
-                const orderbook = await clobClient.getOrderBook(pos.tokenId);
-                const bestBid   = parseFloat(orderbook.bids[0]?.price);
+                // FIX #2: Add try-catch around orderbook fetch
+                let orderbook;
+                try {
+                    orderbook = await clobClient.getOrderBook(pos.tokenId);
+                } catch (err) {
+                    console.error(`[S${pos.slot} ERROR] Failed to fetch orderbook:`, err?.message || err);
+                    continue;
+                }
+
+                // FIX #3: Validate orderbook structure
+                if (!orderbook || !Array.isArray(orderbook.bids) || orderbook.bids.length === 0) {
+                    process.stdout.write(`\r[S${pos.slot}] No bid data yet...   `);
+                    continue;
+                }
+
+                const bestBid   = parseFloat(orderbook.bids[0].price);
 
                 if (!Number.isFinite(bestBid)) {
                     process.stdout.write(`\r[S${pos.slot}] No bid data yet...   `);
@@ -334,6 +449,22 @@ async function runPaperTrader() {
                     console.log(`  Gross     : $${gross.toFixed(4)}`);
                     console.log(`  Fee       : $${fee.toFixed(4)}`);
                     console.log(`  Net PnL   : $${pnl.toFixed(4)} (${pnlPct}%)\n`);
+
+                    // Log exit to file
+                    logTrade({
+                        event: 'EXIT',
+                        slot: pos.slot,
+                        market: currentMarket,
+                        side: pos.side,
+                        entryPrice: pos.entryPrice,
+                        exitPrice: bestBid,
+                        shares: parseFloat(pos.shares.toFixed(4)),
+                        gross: parseFloat(gross.toFixed(4)),
+                        fee: parseFloat(fee.toFixed(4)),
+                        pnl: parseFloat(pnl.toFixed(4)),
+                        pnlPercent: parseFloat(pnlPct),
+                        reason: exit.reason
+                    });
 
                     setPos(null);
                     setGrace(false);
