@@ -349,7 +349,6 @@ async function runPaperTrader() {
                         process.stdout.write(`\r[SCAN S1] Time: ${secondsLeft}s | ${scan.side} $${scan.bestAsk} — LIQ FAIL: ${scan.reason}   `);
                     } else {
                         position1 = buildPosition(scan, 1, YES_TOKEN_ID, NO_TOKEN_ID);
-                        // FIX #7: Fix truncated log string — use secondsLeft variable
                         console.log(`\n[SLOT 1 ENTRY] ${position1.side} | Entry: $${position1.entryPrice} | TP: $${position1.takeProfit} | Shares: ${position1.shares.toFixed(4)} | Time: ${secondsLeft}s`);
                         console.log(`[LIQ] Spread: ${scan.liq.stats.spreadPct}% | Ask: ${scan.liq.stats.askDepth} | Bids: ${scan.liq.stats.viableBidDepth} | Vol: ${scan.liq.stats.totalVol}`);
                         
@@ -374,7 +373,6 @@ async function runPaperTrader() {
                     const scan = await scanForEntry(clobClient, YES_TOKEN_ID, NO_TOKEN_ID, ENTRY_PRICE_SECOND);
                     if (scan && !scan.rejected && scan.bestAsk < position1.entryPrice) {
                         position2 = buildPosition(scan, 2, YES_TOKEN_ID, NO_TOKEN_ID);
-                        // FIX #7: Fix truncated log string — use secondsLeft variable
                         console.log(`\n[SLOT 2 ENTRY] ${position2.side} | Entry: $${position2.entryPrice} | TP: $${position2.takeProfit} | Shares: ${position2.shares.toFixed(4)} | Time: ${secondsLeft}s`);
                         
                         // Log entry to file
@@ -475,9 +473,4 @@ async function runPaperTrader() {
             }
 
         } catch (err) {
-            console.error('[ERROR]', err?.message || err);
-        }
-    }, 1000);
-}
-
-runPaperTrader();
+            console.error('[`*
