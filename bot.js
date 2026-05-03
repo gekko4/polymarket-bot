@@ -1,29 +1,36 @@
+require('dotenv').config();
 const { ClobClient, OrderType } = require('@polymarket/clob-client');
 const { ethers } = require('ethers');
 const fs = require('fs');
 
-// --- WALLET & AUTH CONFIG ---
-const PRIVATE_KEY = 'YOUR_PRIVATE_KEY_HERE'; 
+// --- SECURITY & AUTH ---
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY) throw new Error("CRITICAL: PRIVATE_KEY is missing from .env file!");
+
 const CHAIN_ID = 137; // Polygon Mainnet
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRATEGY CONFIG ---
-const ENTRY_PRICE_MAX        = 0.35;   // Phase 1 ceiling
-const ENTRY_PRICE_SECOND     = 0.25;   // Phase 2 ceiling
-const TAKE_PROFIT_CENTS      = 0.05;   // Target = Entry + 0.05
-const ENTRY_TIME             = 210;    // Entry window closing time
-const GRACE_PERIOD_END       = 110;    // Force exit time
-const BET_SIZE_USD           = 5.00;   // Dollar amount per trade
+const ENTRY_PRICE_MAX        = 0.35;   
+const ENTRY_PRICE_SECOND     = 0.25;   
+const TAKE_PROFIT_CENTS      = 0.05;   
+const ENTRY_TIME             = 210;    
+const GRACE_PERIOD_END       = 110;    
+const BET_SIZE_USD           = 5.00;   
+const TAKER_FEE_BPS          = 150;    // 1.5% fee
 
 // --- STATE MANAGEMENT ---
 let phase1 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
 let phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
 
-// Locks to prevent spamming orders while API requests are in flight
 let isExecutingP1 = false;
 let isExecutingP2 = false;
+let isSearchingNextMarket = false;
 
+let currentYesToken = null;
+let currentNoToken = null;
 let marketEndTime = 0;
+
 let clobClient, wsClient;
 
 // ─────────────────────────────────────────────────────────
@@ -31,49 +38,54 @@ let clobClient, wsClient;
 // ─────────────────────────────────────────────────────────
 async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
     const phaseLock = phaseLevel === 1 ? isExecutingP1 : isExecutingP2;
-    if (phaseLock) return; // Prevent duplicate execution
+    if (phaseLock) return; 
 
     if (phaseLevel === 1) isExecutingP1 = true;
     else isExecutingP2 = true;
 
     try {
         const shares = (BET_SIZE_USD / askPrice).toFixed(2);
-        console.log(`\n[PHASE ${phaseLevel} TRIGGER] ${side} Ask at $${askPrice}. Executing FOK Buy...`);
+        console.log(`\n[PHASE ${phaseLevel} TRIGGER] ${side} Ask at $${askPrice}. Sending FOK...`);
 
-        // 1. EXECUTE FOK BUY
+        // 1. EXECUTE FOK BUY (Taker)
         const buyOrder = await clobClient.createOrder({
             tokenID: tokenId,
             price: askPrice,
             side: 'BUY',
             size: shares,
-            feeRateBps: 150, 
-            orderType: OrderType.FOK // Fill-Or-Kill: No partial fills, no slippage
+            feeRateBps: TAKER_FEE_BPS, 
+            orderType: OrderType.FOK 
         });
         
         const buyResponse = await clobClient.postOrder(buyOrder);
 
-        if (buyResponse && buyResponse.success) {
+        // Check if Polymarket rejected the FOK (Ghost Liquidity)
+        if (buyResponse && buyResponse.success && buyResponse.status !== 'CANCELED') {
             console.log(`[PHASE ${phaseLevel} BUY FILLED] Bought ${shares} ${side} @ $${askPrice}`);
 
-            // 2. IMMEDIATELY PLACE RESTING LIMIT SELL
-            const takeProfitPrice = parseFloat((askPrice + TAKE_PROFIT_CENTS).toFixed(2));
+            // 2. FEE MATH & TARGET CALCULATION
+            // Calculate exact target to ensure +$0.05 net profit after the Taker entry fee
+            const feeCostPerShare = askPrice * (TAKER_FEE_BPS / 10000);
+            const targetPriceRaw = askPrice + TAKE_PROFIT_CENTS + feeCostPerShare;
+            const takeProfitPrice = parseFloat(targetPriceRaw.toFixed(2));
+
             console.log(`[PHASE ${phaseLevel} EXIT SET] Placing Maker Limit Sell @ $${takeProfitPrice}...`);
 
+            // 3. IMMEDIATELY PLACE RESTING LIMIT SELL (Maker)
             const sellOrder = await clobClient.createOrder({
                 tokenID: tokenId,
                 price: takeProfitPrice,
                 side: 'SELL',
                 size: shares,
-                feeRateBps: 150,
-                orderType: OrderType.GTC // Good-Till-Canceled: Rests on the book
+                feeRateBps: TAKER_FEE_BPS, // Usually 0% for Makers, but required field
+                orderType: OrderType.GTC 
             });
 
             const sellResponse = await clobClient.postOrder(sellOrder);
 
             if (sellResponse && sellResponse.success) {
-                console.log(`[PHASE ${phaseLevel} LIVE] Limit Sell resting on orderbook (ID: ${sellResponse.orderID})`);
+                console.log(`[PHASE ${phaseLevel} LIVE] Limit Sell resting (ID: ${sellResponse.orderID})`);
                 
-                // Update State
                 const stateObj = phaseLevel === 1 ? phase1 : phase2;
                 stateObj.active = true;
                 stateObj.side = side;
@@ -81,16 +93,66 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
                 stateObj.entryPrice = askPrice;
                 stateObj.sellOrderId = sellResponse.orderID;
             } else {
-                console.error(`[CRITICAL] Failed to place limit sell for Phase ${phaseLevel}! You are holding unprotected shares.`);
+                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! You are holding shares.`);
             }
         } else {
-            console.log(`[PHASE ${phaseLevel} FAILED] FOK order canceled (Liquidity likely pulled).`);
+            // FOK was rejected (liquidity moved). State remains inactive, unlocking immediately.
+            console.log(`[PHASE ${phaseLevel} REJECTED] Ghost liquidity. Order killed.`);
         }
     } catch (err) {
         console.error(`[EXECUTION ERROR] Phase ${phaseLevel}:`, err.message);
     } finally {
+        // ALWAYS unlock, regardless of success or error, so the bot doesn't freeze
         if (phaseLevel === 1) isExecutingP1 = false;
         else isExecutingP2 = false;
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// MARKET ROLLOVER ENGINE
+// ─────────────────────────────────────────────────────────
+async function loadNextMarket() {
+    if (isSearchingNextMarket) return;
+    isSearchingNextMarket = true;
+    
+    console.log('\n[SCANNER] Searching for the next 5-Min BTC Market...');
+    try {
+        const markets = await clobClient.getMarkets();
+        const btcMarkets = markets.data.filter(m =>
+            m.active && !m.closed && 
+            m.question.toLowerCase().includes('bitcoin') && 
+            m.question.toLowerCase().includes('5')
+        );
+
+        if (!btcMarkets.length) return;
+
+        // Sort by end date to find the *next* resolving market
+        const sorted = btcMarkets.sort((a, b) => new Date(a.end_date_iso) - new Date(b.end_date_iso));
+        
+        // Find the first market that is still in its valid Entry Window
+        const now = Date.now();
+        const validMarket = sorted.find(m => {
+            const timeRemaining = Math.floor((new Date(m.end_date_iso).getTime() - now) / 1000);
+            return timeRemaining > ENTRY_TIME;
+        });
+
+        if (validMarket) {
+            currentYesToken = validMarket.tokens.find(t => t.outcome === 'Yes').token_id;
+            currentNoToken  = validMarket.tokens.find(t => t.outcome === 'No').token_id;
+            marketEndTime   = new Date(validMarket.end_date_iso).getTime();
+            
+            console.log(`[MARKET LOADED] Subscribing to: ${validMarket.question}`);
+            
+            // Subscribe to the new streams seamlessly
+            if (wsClient) {
+                wsClient.subscribe(`market:${currentYesToken}`);
+                wsClient.subscribe(`market:${currentNoToken}`);
+            }
+        }
+    } catch (err) {
+        console.error('[MARKET ERROR]', err.message);
+    } finally {
+        isSearchingNextMarket = false;
     }
 }
 
@@ -101,20 +163,16 @@ function handleOrderbookUpdate(data, side, tokenId) {
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    // Entry Window Closed
     if (secondsLeft < ENTRY_TIME) return;
-
     if (!data.asks || data.asks.length === 0) return;
+
     const bestAsk = parseFloat(data.asks[0].price);
 
-    // Phase 1 Trigger
     if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
         executeTradeSequence(side, tokenId, bestAsk, 1);
     }
 
-    // Phase 2 Trigger
     if (phase1.active && !phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
-        // If holding YES, only buy YES. If holding NO, only buy NO.
         if (phase1.side === side) {
             executeTradeSequence(side, tokenId, bestAsk, 2);
         }
@@ -122,21 +180,15 @@ function handleOrderbookUpdate(data, side, tokenId) {
 }
 
 function handleUserOrderUpdate(data) {
-    // Listens to your private wallet stream.
-    // When the exchange executes your resting Limit Sell, it notifies you here.
     if (!data || !data.orderID || data.status !== 'FILLED') return;
 
-    // Check if the filled order was our Phase 1 exit
     if (phase1.active && data.orderID === phase1.sellOrderId) {
-        console.log(`\n[$$$ PHASE 1 PROFIT] Target Hit! Sold at $${data.price}`);
-        // Reset Phase 1 instantly so it can start hunting again
+        console.log(`\n[$$$ PHASE 1 PROFIT] Maker Target Hit! Sold at $${data.price}`);
         phase1 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
     }
 
-    // Check if the filled order was our Phase 2 exit
     if (phase2.active && data.orderID === phase2.sellOrderId) {
-        console.log(`\n[$$$ PHASE 2 PROFIT] Target Hit! Sold at $${data.price}`);
-        // Reset Phase 2 instantly
+        console.log(`\n[$$$ PHASE 2 PROFIT] Maker Target Hit! Sold at $${data.price}`);
         phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
     }
 }
@@ -145,65 +197,49 @@ function handleUserOrderUpdate(data) {
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
-    console.log("Booting Live WebSockets Engine...");
+    console.log("Booting HFT Live Engine (Premium Intel Optimized)...");
     
     const wallet = new ethers.Wallet(PRIVATE_KEY);
     clobClient = new ClobClient(HOST, CHAIN_ID, wallet);
     
-    // ... (Assume logic to fetch active market and tokens goes here)
-    const YES_TOKEN_ID = '...'; 
-    const NO_TOKEN_ID = '...';
-    marketEndTime = Date.now() + (300 * 1000); // Example 5 min future
-
-    // 1. Initialize WebSocket
     wsClient = clobClient.createWsClient();
     await wsClient.connect();
-
-    // 2. Subscribe to Market Data (Real-time orderbook)
-    wsClient.subscribe(`market:${YES_TOKEN_ID}`);
-    wsClient.subscribe(`market:${NO_TOKEN_ID}`);
-    
-    // 3. Subscribe to Private User Data (Real-time order fills)
     wsClient.subscribe(`user`); 
 
-    // 4. WebSocket Event Listeners
     wsClient.on('message', (msg) => {
         const data = JSON.parse(msg);
-        
         if (data.channel.startsWith('market:')) {
-            const side = data.channel.includes(YES_TOKEN_ID) ? 'YES' : 'NO';
-            const tokenId = side === 'YES' ? YES_TOKEN_ID : NO_TOKEN_ID;
+            const side = data.channel.includes(currentYesToken) ? 'YES' : 'NO';
+            const tokenId = side === 'YES' ? currentYesToken : currentNoToken;
             handleOrderbookUpdate(data, side, tokenId);
         }
-        
         if (data.channel === 'user') {
             handleUserOrderUpdate(data);
         }
     });
 
-    // 5. The Clock Loop (Only handles Grace Period force-exits now)
+    await loadNextMarket();
+
     setInterval(async () => {
         const now = Date.now();
         const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
-        let graceNotified = false;
 
+        // Background Rollover: Start looking for the next market before this one ends
+        if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) {
+            loadNextMarket();
+        }
+
+        // Grace Period Exit
         if (secondsLeft <= GRACE_PERIOD_END) {
-            // GRACE PERIOD LOGIC:
-            // If active phases exist, cancel their resting sell orders 
-            // and execute market sell orders immediately.
-            
             for (const p of [phase1, phase2]) {
                 if (p.active) {
-                    console.log(`\n[GRACE PERIOD] Force closing resting order: ${p.sellOrderId}`);
+                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell & force-closing at market...`);
                     await clobClient.cancelOrder({ orderID: p.sellOrderId });
-                    
-                    // Code to place an immediate market sell order goes here...
-                    
-                    p.active = false; // clear state
+                    // Place Market Sell Order logic here...
+                    p.active = false; 
                 }
             }
         } else {
-            // Heartbeat log
             process.stdout.write(`\r[LIVE] Time: ${secondsLeft}s | Phase 1: ${phase1.active ? 'HOLD' : 'HUNT'} | Phase 2: ${phase2.active ? 'HOLD' : 'HUNT'}   `);
         }
     }, 1000);
