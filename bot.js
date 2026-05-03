@@ -8,7 +8,6 @@ const WebSocket = require('ws');
 // --- SECURITY & AUTH ---
 let rawKey = process.env.PRIVATE_KEY;
 if (!rawKey) throw new Error("CRITICAL: PRIVATE_KEY is missing from .env file!");
-// Viem strictly requires the private key to start with '0x'
 if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey; 
 
 const CHAIN_ID = 137; 
@@ -30,6 +29,7 @@ let phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrde
 let isExecutingP1 = false;
 let isExecutingP2 = false;
 let isSearchingNextMarket = false;
+let searchCooldownTimer = 0; // The 30-second shield
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -52,14 +52,8 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
         console.log(`\n[PHASE ${phaseLevel} TRIGGER] ${side} Ask at $${askPrice}. Sending FOK...`);
 
         const buyOrder = await clobClient.createOrder({
-            tokenID: tokenId,
-            price: askPrice,
-            side: 'BUY',
-            size: shares,
-            feeRateBps: TAKER_FEE_BPS, 
-            orderType: OrderType.FOK 
+            tokenID: tokenId, price: askPrice, side: 'BUY', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.FOK 
         });
-        
         const buyResponse = await clobClient.postOrder(buyOrder);
 
         if (buyResponse && buyResponse.success && buyResponse.status !== 'CANCELED') {
@@ -72,26 +66,14 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
             console.log(`[PHASE ${phaseLevel} EXIT SET] Placing Maker Limit Sell @ $${takeProfitPrice}...`);
 
             const sellOrder = await clobClient.createOrder({
-                tokenID: tokenId,
-                price: takeProfitPrice,
-                side: 'SELL',
-                size: shares,
-                feeRateBps: TAKER_FEE_BPS, 
-                orderType: OrderType.GTC 
+                tokenID: tokenId, price: takeProfitPrice, side: 'SELL', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.GTC 
             });
-
             const sellResponse = await clobClient.postOrder(sellOrder);
 
             if (sellResponse && sellResponse.success) {
                 console.log(`[PHASE ${phaseLevel} LIVE] Limit Sell resting (ID: ${sellResponse.orderID})`);
                 const stateObj = phaseLevel === 1 ? phase1 : phase2;
-                stateObj.active = true;
-                stateObj.side = side;
-                stateObj.tokenId = tokenId;
-                stateObj.entryPrice = askPrice;
-                stateObj.sellOrderId = sellResponse.orderID;
-            } else {
-                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! You are holding shares.`);
+                stateObj.active = true; stateObj.side = side; stateObj.tokenId = tokenId; stateObj.entryPrice = askPrice; stateObj.sellOrderId = sellResponse.orderID;
             }
         } else {
             console.log(`[PHASE ${phaseLevel} REJECTED] Ghost liquidity or insufficient funds. Order killed.`);
@@ -99,28 +81,39 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
     } catch (err) {
         console.error(`[EXECUTION ERROR] Phase ${phaseLevel}:`, err.message);
     } finally {
-        if (phaseLevel === 1) isExecutingP1 = false;
-        else isExecutingP2 = false;
+        if (phaseLevel === 1) isExecutingP1 = false; else isExecutingP2 = false;
     }
 }
 
 // ─────────────────────────────────────────────────────────
-// MARKET ROLLOVER ENGINE
+// MARKET ROLLOVER ENGINE & AUTO-DEBUGGER
 // ─────────────────────────────────────────────────────────
 async function loadNextMarket() {
     if (isSearchingNextMarket) return;
+    if (Date.now() < searchCooldownTimer) return; 
+
     isSearchingNextMarket = true;
+    console.log('\n[SCANNER] Searching for the next short-term BTC Market...');
     
-    console.log('\n[SCANNER] Searching for the next 5-Min BTC Market...');
     try {
         const markets = await clobClient.getMarkets();
-       // Widen search to catch the exact Polymarket URL slug
-        const btcMarkets = markets.data.filter(m =>
-            m.active && !m.closed && 
-            m.event_slug && m.event_slug.toLowerCase().includes('btc-updown-5m')
+        const activeMarkets = markets.data.filter(m => m.active && !m.closed);
+
+        // Broadened search to catch anything related to BTC
+        const btcMarkets = activeMarkets.filter(m => 
+            m.question.toLowerCase().includes('btc') || 
+            m.question.toLowerCase().includes('bitcoin')
         );
 
-        if (!btcMarkets.length) return;
+        if (!btcMarkets.length) {
+            console.log('[SCANNER ALERT] I cannot find any BTC markets. Here is what Polymarket is sending me:');
+            // Auto-Debugger: Print 3 random active markets so we can see the exact formatting
+            activeMarkets.slice(0, 3).forEach(m => console.log(` -> TITLE: "${m.question}"`));
+            
+            console.log('[SCANNER] Retrying in 30 seconds...');
+            searchCooldownTimer = Date.now() + 30000;
+            return;
+        }
 
         const sorted = btcMarkets.sort((a, b) => new Date(a.end_date_iso) - new Date(b.end_date_iso));
         const now = Date.now();
@@ -138,13 +131,16 @@ async function loadNextMarket() {
             
             if (global.wsMarket && global.wsMarket.readyState === WebSocket.OPEN) {
                 global.wsMarket.send(JSON.stringify({
-                    type: "market",
-                    assets_ids: [currentYesToken, currentNoToken]
+                    type: "market", assets_ids: [currentYesToken, currentNoToken]
                 }));
             }
+        } else {
+            console.log('[SCANNER] Found BTC markets, but they are expiring too soon. Retrying in 30s...');
+            searchCooldownTimer = Date.now() + 30000;
         }
     } catch (err) {
         console.error('[MARKET ERROR]', err.message);
+        searchCooldownTimer = Date.now() + 30000; 
     } finally {
         isSearchingNextMarket = false;
     }
@@ -165,14 +161,9 @@ function handleMarketUpdate(data) {
     const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
     const tokenId = data.asset_id;
 
-    if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
-        executeTradeSequence(side, tokenId, bestAsk, 1);
-    }
-
+    if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) executeTradeSequence(side, tokenId, bestAsk, 1);
     if (phase1.active && !phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
-        if (phase1.side === side) {
-            executeTradeSequence(side, tokenId, bestAsk, 2);
-        }
+        if (phase1.side === side) executeTradeSequence(side, tokenId, bestAsk, 2);
     }
 }
 
@@ -180,55 +171,31 @@ function handleMarketUpdate(data) {
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
-    console.log("Booting HFT Live Engine (Viem Optimized)...");
+    console.log("Booting HFT Live Engine (Viem + Anti-Spam Optimized)...");
     
-    // --- VIEM WALLET SETUP ---
     const account = privateKeyToAccount(rawKey);
-    const walletClient = createWalletClient({
-        account,
-        chain: polygon,
-        transport: http()
-    });
-
+    const walletClient = createWalletClient({ account, chain: polygon, transport: http() });
     clobClient = new ClobClient(HOST, CHAIN_ID, walletClient);
 
-    // 1. Authenticate to get API keys for User WS
     let creds;
-    try {
-        creds = await clobClient.deriveApiKey();
-    } catch (e) {
-        console.log("Generating initial API keys for this wallet...");
-        creds = await clobClient.createApiKey();
-    }
+    try { creds = await clobClient.deriveApiKey(); } 
+    catch (e) { creds = await clobClient.createApiKey(); }
     const apiKey = creds.apiKey || creds.key;
 
-    // 2. Connect to Market WebSocket manually
     const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
     global.wsMarket = wsMarket; 
     
-    wsMarket.on('open', () => {
-        console.log("[WS] Market Stream Connected.");
-    });
-    
+    wsMarket.on('open', () => console.log("[WS] Market Stream Connected."));
     wsMarket.on('message', (msg) => {
         const data = JSON.parse(msg);
-        if (data.event === 'book' || data.event === 'price_change') {
-            handleMarketUpdate(data);
-        }
+        if (data.event === 'book' || data.event === 'price_change') handleMarketUpdate(data);
     });
 
-    // 3. Connect to User WebSocket manually
     const wsUser = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/user');
     wsUser.on('open', () => {
         console.log("[WS] User Stream Connected.");
         wsUser.send(JSON.stringify({
-            type: "user",
-            auth: {
-                apikey: apiKey,
-                apiKey: apiKey, 
-                secret: creds.secret,
-                passphrase: creds.passphrase
-            }
+            type: "user", auth: { apikey: apiKey, apiKey: apiKey, secret: creds.secret, passphrase: creds.passphrase }
         }));
     });
 
@@ -238,11 +205,11 @@ async function runLiveTrader() {
             for (const order of data) {
                 if (order.status === 'FILLED') {
                     if (phase1.active && order.orderID === phase1.sellOrderId) {
-                        console.log(`\n[$$$ PHASE 1 PROFIT] Maker Target Hit! Sold at $${order.price}`);
+                        console.log(`\n[$$$ PHASE 1 PROFIT] Sold at $${order.price}`);
                         phase1 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
                     }
                     if (phase2.active && order.orderID === phase2.sellOrderId) {
-                        console.log(`\n[$$$ PHASE 2 PROFIT] Maker Target Hit! Sold at $${order.price}`);
+                        console.log(`\n[$$$ PHASE 2 PROFIT] Sold at $${order.price}`);
                         phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
                     }
                 }
@@ -253,28 +220,27 @@ async function runLiveTrader() {
     await loadNextMarket();
 
     setInterval(async () => {
+        if (marketEndTime === 0) {
+            loadNextMarket();
+            return;
+        }
+
         const now = Date.now();
         const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-        if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) {
-            loadNextMarket();
-        }
+        if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) loadNextMarket();
 
         if (secondsLeft <= GRACE_PERIOD_END) {
             for (const p of [phase1, phase2]) {
                 if (p.active) {
-                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell & force-closing at market...`);
-                    try {
-                        await clobClient.cancelOrder({ orderID: p.sellOrderId });
-                    } catch (e) {
-                        // ignore errors if already cancelled
-                    }
+                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell...`);
+                    try { await clobClient.cancelOrder({ orderID: p.sellOrderId }); } catch (e) {}
                     p.active = false; 
                 }
             }
         } else {
             if (secondsLeft % 10 === 0) {
-                console.log(`[LIVE] Time: ${secondsLeft}s | Phase 1: ${phase1.active ? 'HOLD' : 'HUNT'} | Phase 2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
+                console.log(`[LIVE] Time: ${secondsLeft}s | P1: ${phase1.active ? 'HOLD' : 'HUNT'} | P2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
             }
         }
     }, 1000);
