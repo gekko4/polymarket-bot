@@ -1,11 +1,15 @@
 require('dotenv').config();
 const { ClobClient, OrderType } = require('@polymarket/clob-client');
-const { ethers } = require('ethers');
-const WebSocket = require('ws'); // <-- IMPORTANT FIX: Using raw WebSockets
+const { createWalletClient, http } = require('viem');
+const { privateKeyToAccount } = require('viem/accounts');
+const { polygon } = require('viem/chains');
+const WebSocket = require('ws'); 
 
 // --- SECURITY & AUTH ---
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
-if (!PRIVATE_KEY) throw new Error("CRITICAL: PRIVATE_KEY is missing from .env file!");
+let rawKey = process.env.PRIVATE_KEY;
+if (!rawKey) throw new Error("CRITICAL: PRIVATE_KEY is missing from .env file!");
+// Viem strictly requires the private key to start with '0x'
+if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey; 
 
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
@@ -176,10 +180,17 @@ function handleMarketUpdate(data) {
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
-    console.log("Booting HFT Live Engine (Premium Intel Optimized)...");
+    console.log("Booting HFT Live Engine (Viem Optimized)...");
     
-    const wallet = new ethers.Wallet(PRIVATE_KEY);
-    clobClient = new ClobClient(HOST, CHAIN_ID, wallet);
+    // --- VIEM WALLET SETUP ---
+    const account = privateKeyToAccount(rawKey);
+    const walletClient = createWalletClient({
+        account,
+        chain: polygon,
+        transport: http()
+    });
+
+    clobClient = new ClobClient(HOST, CHAIN_ID, walletClient);
 
     // 1. Authenticate to get API keys for User WS
     let creds;
@@ -262,7 +273,6 @@ async function runLiveTrader() {
                 }
             }
         } else {
-            // Only log every 10 seconds to keep PM2 logs clean
             if (secondsLeft % 10 === 0) {
                 console.log(`[LIVE] Time: ${secondsLeft}s | Phase 1: ${phase1.active ? 'HOLD' : 'HUNT'} | Phase 2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
             }

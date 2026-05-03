@@ -12,8 +12,8 @@
   "dependencies": {
     "@polymarket/clob-client": "^5.8.1",
     "dotenv": "^17.4.2",
-    "ethers": "^5.7.2",
     "secp256k1": "^5.0.1",
+    "viem": "^2.48.8",
     "ws": "^8.20.0"
   },
   "repository": {
