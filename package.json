@@ -10,6 +10,18 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@polymarket/clob-client": "^5.8.1"
-  }
+    "@polymarket/clob-client": "^5.8.1",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.16.0",
+    "secp256k1": "^5.0.1",
+    "ws": "^8.20.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gekko4/polymarket-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gekko4/polymarket-bot/issues"
+  },
+  "homepage": "https://github.com/gekko4/polymarket-bot#readme"
 }
