@@ -114,10 +114,10 @@ async function loadNextMarket() {
     console.log('\n[SCANNER] Searching for the next 5-Min BTC Market...');
     try {
         const markets = await clobClient.getMarkets();
+       // Widen search to catch the exact Polymarket URL slug
         const btcMarkets = markets.data.filter(m =>
             m.active && !m.closed && 
-            m.question.toLowerCase().includes('bitcoin') && 
-            m.question.toLowerCase().includes('5')
+            m.event_slug && m.event_slug.toLowerCase().includes('btc-updown-5m')
         );
 
         if (!btcMarkets.length) return;
