@@ -19,8 +19,8 @@ const ENTRY_PRICE_SECOND     = 0.25;
 const TAKE_PROFIT_CENTS      = 0.05;   
 const ENTRY_TIME             = 210;    
 const GRACE_PERIOD_END       = 110;    
-const BET_SIZE_USD           = 5.00;   
-const TAKER_FEE_BPS          = 150;    
+const BET_SIZE_USD           = 1.00;   // Safest size for live testing
+const TAKER_FEE_BPS          = 150;    // 1.5% fee
 
 // --- STATE MANAGEMENT ---
 let phase1 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
@@ -29,7 +29,7 @@ let phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrde
 let isExecutingP1 = false;
 let isExecutingP2 = false;
 let isSearchingNextMarket = false;
-let searchCooldownTimer = 0; // The 30-second shield
+let searchCooldownTimer = 0; 
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -74,6 +74,8 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
                 console.log(`[PHASE ${phaseLevel} LIVE] Limit Sell resting (ID: ${sellResponse.orderID})`);
                 const stateObj = phaseLevel === 1 ? phase1 : phase2;
                 stateObj.active = true; stateObj.side = side; stateObj.tokenId = tokenId; stateObj.entryPrice = askPrice; stateObj.sellOrderId = sellResponse.orderID;
+            } else {
+                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! You are holding shares.`);
             }
         } else {
             console.log(`[PHASE ${phaseLevel} REJECTED] Ghost liquidity or insufficient funds. Order killed.`);
@@ -86,30 +88,27 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
 }
 
 // ─────────────────────────────────────────────────────────
-// MARKET ROLLOVER ENGINE & AUTO-DEBUGGER
+// MARKET ROLLOVER ENGINE
 // ─────────────────────────────────────────────────────────
 async function loadNextMarket() {
     if (isSearchingNextMarket) return;
     if (Date.now() < searchCooldownTimer) return; 
 
     isSearchingNextMarket = true;
-    console.log('\n[SCANNER] Searching for the next short-term BTC Market...');
+    console.log('\n[SCANNER] Searching for the next 5-Min BTC Market...');
     
     try {
         const markets = await clobClient.getMarkets();
         const activeMarkets = markets.data.filter(m => m.active && !m.closed);
 
-        // Broadened search to catch anything related to BTC
+        // Targeted search using the exact URL slug
         const btcMarkets = activeMarkets.filter(m => 
-            m.question.toLowerCase().includes('btc') || 
-            m.question.toLowerCase().includes('bitcoin')
+            m.event_slug && m.event_slug.toLowerCase().includes('btc-updown-5m')
         );
 
         if (!btcMarkets.length) {
-            console.log('[SCANNER ALERT] I cannot find any BTC markets. Here is what Polymarket is sending me:');
-            // Auto-Debugger: Print 3 random active markets so we can see the exact formatting
-            activeMarkets.slice(0, 3).forEach(m => console.log(` -> TITLE: "${m.question}"`));
-            
+            console.log('[SCANNER ALERT] I cannot find the exact slug. Here is what Polymarket is sending me:');
+            activeMarkets.slice(0, 3).forEach(m => console.log(` -> TITLE: "${m.question}" | SLUG: "${m.event_slug}"`));
             console.log('[SCANNER] Retrying in 30 seconds...');
             searchCooldownTimer = Date.now() + 30000;
             return;
@@ -135,7 +134,7 @@ async function loadNextMarket() {
                 }));
             }
         } else {
-            console.log('[SCANNER] Found BTC markets, but they are expiring too soon. Retrying in 30s...');
+            console.log('[SCANNER] Found markets, but they expire too soon. Retrying in 30s...');
             searchCooldownTimer = Date.now() + 30000;
         }
     } catch (err) {
@@ -205,11 +204,11 @@ async function runLiveTrader() {
             for (const order of data) {
                 if (order.status === 'FILLED') {
                     if (phase1.active && order.orderID === phase1.sellOrderId) {
-                        console.log(`\n[$$$ PHASE 1 PROFIT] Sold at $${order.price}`);
+                        console.log(`\n[$$$ PHASE 1 PROFIT] Target Hit! Sold at $${order.price}`);
                         phase1 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
                     }
                     if (phase2.active && order.orderID === phase2.sellOrderId) {
-                        console.log(`\n[$$$ PHASE 2 PROFIT] Sold at $${order.price}`);
+                        console.log(`\n[$$$ PHASE 2 PROFIT] Target Hit! Sold at $${order.price}`);
                         phase2 = { active: false, side: null, tokenId: null, entryPrice: 0, sellOrderId: null };
                     }
                 }
@@ -228,13 +227,26 @@ async function runLiveTrader() {
         const now = Date.now();
         const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
+        // Background scan for the next market
         if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) loadNextMarket();
 
+        // --- THE MARKET DUMP LOGIC ---
         if (secondsLeft <= GRACE_PERIOD_END) {
             for (const p of [phase1, phase2]) {
                 if (p.active) {
-                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell...`);
+                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell to avoid trap...`);
                     try { await clobClient.cancelOrder({ orderID: p.sellOrderId }); } catch (e) {}
+
+                    console.log(`[GRACE PERIOD DUMP] Firing Market Sell to liquidate shares...`);
+                    try {
+                        const shares = (BET_SIZE_USD / p.entryPrice).toFixed(2);
+                        const dumpOrder = await clobClient.createOrder({
+                            tokenID: p.tokenId, price: 0.01, side: 'SELL', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.FOK 
+                        });
+                        await clobClient.postOrder(dumpOrder);
+                        console.log(`[LIQUIDATED] Dumped bag to the highest bidder.`);
+                    } catch (e) { console.error(`[DUMP FAILED]`, e.message); }
+
                     p.active = false; 
                 }
             }
