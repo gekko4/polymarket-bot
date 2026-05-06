@@ -160,9 +160,12 @@ function handleMarketUpdate(data) {
     const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
     const tokenId = data.asset_id;
 
-    if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) executeTradeSequence(side, tokenId, bestAsk, 1);
-    if (phase1.active && !phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
-        if (phase1.side === side) executeTradeSequence(side, tokenId, bestAsk, 2);
+    if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
+        executeTradeSequence(side, tokenId, bestAsk, 1);
+    }
+
+    if (!phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
+        executeTradeSequence(side, tokenId, bestAsk, 2);
     }
 }
 
