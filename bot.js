@@ -38,7 +38,7 @@ let marketEndTime = 0;
 let clobClient;
 
 // ─────────────────────────────────────────────────────────
-// EXECUTION: ENTRY & EXIT
+// EXECUTION: ENTRY & EXIT (PLAN A)
 // ─────────────────────────────────────────────────────────
 async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
     const phaseLock = phaseLevel === 1 ? isExecutingP1 : isExecutingP2;
@@ -79,14 +79,13 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
                 stateObj.entryPrice = askPrice; 
                 stateObj.sellOrderId = sellResponse.orderID;
             } else {
-                // FIXED BUG: Lock the phase so it doesn't infinite-buy if the sell API fails.
-                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! Locking phase to prevent infinite buys.`);
+                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! Locking phase to prevent infinite buys. Triggering Smart Exit Hunter...`);
                 const stateObj = phaseLevel === 1 ? phase1 : phase2;
                 stateObj.active = true; 
                 stateObj.side = side; 
                 stateObj.tokenId = tokenId; 
                 stateObj.entryPrice = askPrice;
-                // sellOrderId remains null, but grace period dump will catch it by tokenId later
+                // sellOrderId remains null, which activates the Smart Exit Hunter
             }
         } else {
             console.log(`[PHASE ${phaseLevel} REJECTED] Ghost liquidity or insufficient funds. Order killed.`);
@@ -95,6 +94,45 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
         console.error(`[EXECUTION ERROR] Phase ${phaseLevel}:`, err.message);
     } finally {
         if (phaseLevel === 1) isExecutingP1 = false; else isExecutingP2 = false;
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// SMART EXIT HANDLER (PLAN B: The Hunter)
+// ─────────────────────────────────────────────────────────
+async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
+    // Temporarily lock the sellOrderId with a string so we don't spam the API every millisecond
+    phaseObj.sellOrderId = "pending_smart_exit";
+    
+    console.log(`\n[SMART EXIT TRIGGERED] Phase ${phaseLevel} target spotted at $${bidPrice}! Firing FOK...`);
+    
+    try {
+        const shares = (BET_SIZE_USD / phaseObj.entryPrice).toFixed(2);
+        const exitOrder = await clobClient.createOrder({
+            tokenID: phaseObj.tokenId, 
+            price: bidPrice, 
+            side: 'SELL', 
+            size: shares, 
+            feeRateBps: TAKER_FEE_BPS, 
+            orderType: OrderType.FOK 
+        });
+        const res = await clobClient.postOrder(exitOrder);
+        
+        if (res && res.success && res.status !== 'CANCELED') {
+             console.log(`[$$$ SMART EXIT PROFIT] Phase ${phaseLevel} bag saved! Sold at $${bidPrice}`);
+             // Fully reset the phase so it can immediately trade again
+             phaseObj.active = false;
+             phaseObj.side = null;
+             phaseObj.tokenId = null;
+             phaseObj.entryPrice = 0;
+             phaseObj.sellOrderId = null;
+        } else {
+             console.log(`[SMART EXIT MISSED] Liquidity vanished. Unlocking to hunt again...`);
+             phaseObj.sellOrderId = null; // Unlock it so the WebSocket keeps hunting
+        }
+    } catch (e) {
+        console.error(`[SMART EXIT ERROR] Phase ${phaseLevel}:`, e.message);
+        phaseObj.sellOrderId = null; // Unlock on error
     }
 }
 
@@ -160,23 +198,39 @@ async function loadNextMarket() {
 // WEBSOCKET HANDLERS
 // ─────────────────────────────────────────────────────────
 function handleMarketUpdate(data) {
-    if (!data || !data.asks || data.asks.length === 0) return;
+    if (!data) return;
 
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    if (secondsLeft < ENTRY_TIME) return;
-
-    const bestAsk = parseFloat(data.asks[0].price);
-    const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
+    const bestAsk = data.asks && data.asks.length > 0 ? parseFloat(data.asks[0].price) : null;
+    const bestBid = data.bids && data.bids.length > 0 ? parseFloat(data.bids[0].price) : null;
     const tokenId = data.asset_id;
+    const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
 
-    if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
-        executeTradeSequence(side, tokenId, bestAsk, 1);
+    // --- 1. SMART EXIT HUNTER (No Relaxing!) ---
+    for (const p of [phase1, phase2]) {
+        if (p.active && !p.sellOrderId && p.tokenId === tokenId && bestBid !== null) {
+            const feeCostPerShare = p.entryPrice * (TAKER_FEE_BPS / 10000);
+            const targetPrice = p.entryPrice + TAKE_PROFIT_CENTS + feeCostPerShare;
+
+            if (bestBid >= targetPrice) {
+                executeSmartExit(p, bestBid, p === phase1 ? 1 : 2);
+            }
+        }
     }
 
-    if (!phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
-        executeTradeSequence(side, tokenId, bestAsk, 2);
+    // --- 2. NEW ENTRY LOGIC ---
+    if (secondsLeft < ENTRY_TIME) return;
+
+    if (bestAsk !== null) {
+        if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
+            executeTradeSequence(side, tokenId, bestAsk, 1);
+        }
+
+        if (!phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
+            executeTradeSequence(side, tokenId, bestAsk, 2);
+        }
     }
 }
 
@@ -250,7 +304,7 @@ async function runLiveTrader() {
                 if (p.active) {
                     console.log(`\n[GRACE PERIOD] Canceling Maker Sell to avoid trap...`);
                     try { 
-                        if (p.sellOrderId) {
+                        if (p.sellOrderId && p.sellOrderId !== "pending_smart_exit") {
                             await clobClient.cancelOrder({ orderID: p.sellOrderId }); 
                         }
                     } catch (e) {}
