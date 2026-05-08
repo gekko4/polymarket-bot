@@ -17,6 +17,8 @@ const HOST = 'https://clob.polymarket.com';
 const ENTRY_PRICE_MAX        = 0.35;   
 const ENTRY_PRICE_SECOND     = 0.25;   
 const TAKE_PROFIT_CENTS      = 0.05;   
+const MAX_DRAWDOWN_EARLY     = 0.20;   // Allowed price drop early in the trade
+const MAX_DRAWDOWN_LATE      = 0.05;   // Allowed price drop right before grace period
 const ENTRY_TIME             = 210;    
 const GRACE_PERIOD_END       = 110;    
 const BET_SIZE_USD           = 1.00;   // Safest size for live testing
@@ -101,7 +103,6 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
 // SMART EXIT HANDLER (PLAN B: The Hunter)
 // ─────────────────────────────────────────────────────────
 async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
-    // Temporarily lock the sellOrderId with a string so we don't spam the API every millisecond
     phaseObj.sellOrderId = "pending_smart_exit";
     
     console.log(`\n[SMART EXIT TRIGGERED] Phase ${phaseLevel} target spotted at $${bidPrice}! Firing FOK...`);
@@ -109,18 +110,12 @@ async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
     try {
         const shares = (BET_SIZE_USD / phaseObj.entryPrice).toFixed(2);
         const exitOrder = await clobClient.createOrder({
-            tokenID: phaseObj.tokenId, 
-            price: bidPrice, 
-            side: 'SELL', 
-            size: shares, 
-            feeRateBps: TAKER_FEE_BPS, 
-            orderType: OrderType.FOK 
+            tokenID: phaseObj.tokenId, price: bidPrice, side: 'SELL', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.FOK 
         });
         const res = await clobClient.postOrder(exitOrder);
         
         if (res && res.success && res.status !== 'CANCELED') {
              console.log(`[$$$ SMART EXIT PROFIT] Phase ${phaseLevel} bag saved! Sold at $${bidPrice}`);
-             // Fully reset the phase so it can immediately trade again
              phaseObj.active = false;
              phaseObj.side = null;
              phaseObj.tokenId = null;
@@ -128,11 +123,49 @@ async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
              phaseObj.sellOrderId = null;
         } else {
              console.log(`[SMART EXIT MISSED] Liquidity vanished. Unlocking to hunt again...`);
-             phaseObj.sellOrderId = null; // Unlock it so the WebSocket keeps hunting
+             phaseObj.sellOrderId = null; 
         }
     } catch (e) {
         console.error(`[SMART EXIT ERROR] Phase ${phaseLevel}:`, e.message);
-        phaseObj.sellOrderId = null; // Unlock on error
+        phaseObj.sellOrderId = null; 
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// TIME-DECAYING STOP LOSS EXECUTOR
+// ─────────────────────────────────────────────────────────
+async function executeStopLossDump(phaseObj, phaseLevel) {
+    const restingOrderId = phaseObj.sellOrderId;
+    phaseObj.sellOrderId = "pending_stop_loss"; 
+
+    try {
+        if (restingOrderId && restingOrderId !== "pending_smart_exit") {
+            console.log(`[STOP LOSS] Canceling resting Limit Sell to free shares...`);
+            await clobClient.cancelOrder({ orderID: restingOrderId });
+        }
+
+        console.log(`[STOP LOSS DUMP] Phase ${phaseLevel} firing Market Sell...`);
+        const shares = (BET_SIZE_USD / phaseObj.entryPrice).toFixed(2);
+        
+        const exitOrder = await clobClient.createOrder({
+            tokenID: phaseObj.tokenId, price: 0.01, side: 'SELL', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.FOK 
+        });
+        const res = await clobClient.postOrder(exitOrder);
+        
+        if (res && res.success && res.status !== 'CANCELED') {
+             console.log(`[-$ STOP LOSS EXECUTED] Phase ${phaseLevel} bag liquidated to protect capital.`);
+             phaseObj.active = false;
+             phaseObj.side = null;
+             phaseObj.tokenId = null;
+             phaseObj.entryPrice = 0;
+             phaseObj.sellOrderId = null;
+        } else {
+             console.log(`[STOP LOSS FAILED] Unlocking phase. Will retry...`);
+             phaseObj.sellOrderId = restingOrderId; 
+        }
+    } catch (e) {
+        console.error(`[STOP LOSS ERROR] Phase ${phaseLevel}:`, e.message);
+        phaseObj.sellOrderId = restingOrderId;
     }
 }
 
@@ -150,15 +183,12 @@ async function loadNextMarket() {
         const markets = await clobClient.getMarkets();
         const activeMarkets = markets.data.filter(m => m.active && !m.closed);
 
-        // Targeted search using the exact URL slug
         const btcMarkets = activeMarkets.filter(m => 
             m.event_slug && m.event_slug.toLowerCase().includes('btc-updown-5m')
         );
 
         if (!btcMarkets.length) {
-            console.log('[SCANNER ALERT] I cannot find the exact slug. Here is what Polymarket is sending me:');
-            activeMarkets.slice(0, 3).forEach(m => console.log(` -> TITLE: "${m.question}" | SLUG: "${m.event_slug}"`));
-            console.log('[SCANNER] Retrying in 30 seconds...');
+            console.log('[SCANNER ALERT] I cannot find the exact slug.');
             searchCooldownTimer = Date.now() + 30000;
             return;
         }
@@ -183,7 +213,6 @@ async function loadNextMarket() {
                 }));
             }
         } else {
-            console.log('[SCANNER] Found markets, but they expire too soon. Retrying in 30s...');
             searchCooldownTimer = Date.now() + 30000;
         }
     } catch (err) {
@@ -208,7 +237,7 @@ function handleMarketUpdate(data) {
     const tokenId = data.asset_id;
     const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
 
-    // --- 1. SMART EXIT HUNTER (No Relaxing!) ---
+    // --- 1. SMART EXIT HUNTER (Plan B: Take Profit) ---
     for (const p of [phase1, phase2]) {
         if (p.active && !p.sellOrderId && p.tokenId === tokenId && bestBid !== null) {
             const feeCostPerShare = p.entryPrice * (TAKER_FEE_BPS / 10000);
@@ -220,7 +249,29 @@ function handleMarketUpdate(data) {
         }
     }
 
-    // --- 2. NEW ENTRY LOGIC ---
+    // --- 2. TIME-DECAYING DYNAMIC STOP LOSS ---
+    for (const p of [phase1, phase2]) {
+        if (p.active && p.tokenId === tokenId && bestBid !== null) {
+            if (p.sellOrderId === "pending_smart_exit" || p.sellOrderId === "pending_stop_loss") continue;
+
+            const timeWindow = ENTRY_TIME - GRACE_PERIOD_END; 
+            const timeRemainingInWindow = Math.max(0, secondsLeft - GRACE_PERIOD_END);
+            
+            // If we are past the grace period, fraction is 0. If brand new, fraction is 1.
+            const timeFraction = Math.min(1, timeRemainingInWindow / timeWindow); 
+
+            const dynamicTolerance = MAX_DRAWDOWN_LATE + (MAX_DRAWDOWN_EARLY - MAX_DRAWDOWN_LATE) * timeFraction;
+            const currentDrawdown = p.entryPrice - bestBid;
+
+            if (currentDrawdown > dynamicTolerance) {
+                console.log(`\n[DYNAMIC STOP-LOSS ALERT] Phase ${p === phase1 ? 1 : 2} breached tolerance!`);
+                console.log(` -> Drawdown: -$${currentDrawdown.toFixed(2)} | Allowed for time left: -$${dynamicTolerance.toFixed(2)}`);
+                executeStopLossDump(p, p === phase1 ? 1 : 2); 
+            }
+        }
+    }
+
+    // --- 3. NEW ENTRY LOGIC ---
     if (secondsLeft < ENTRY_TIME) return;
 
     if (bestAsk !== null) {
@@ -295,16 +346,15 @@ async function runLiveTrader() {
         const now = Date.now();
         const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-        // Background scan for the next market
         if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) loadNextMarket();
 
-        // --- THE MARKET DUMP LOGIC ---
+        // --- THE MARKET DUMP LOGIC (Grace Period) ---
         if (secondsLeft <= GRACE_PERIOD_END) {
             for (const p of [phase1, phase2]) {
                 if (p.active) {
                     console.log(`\n[GRACE PERIOD] Canceling Maker Sell to avoid trap...`);
                     try { 
-                        if (p.sellOrderId && p.sellOrderId !== "pending_smart_exit") {
+                        if (p.sellOrderId && p.sellOrderId !== "pending_smart_exit" && p.sellOrderId !== "pending_stop_loss") {
                             await clobClient.cancelOrder({ orderID: p.sellOrderId }); 
                         }
                     } catch (e) {}
