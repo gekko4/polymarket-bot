@@ -73,9 +73,20 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
             if (sellResponse && sellResponse.success) {
                 console.log(`[PHASE ${phaseLevel} LIVE] Limit Sell resting (ID: ${sellResponse.orderID})`);
                 const stateObj = phaseLevel === 1 ? phase1 : phase2;
-                stateObj.active = true; stateObj.side = side; stateObj.tokenId = tokenId; stateObj.entryPrice = askPrice; stateObj.sellOrderId = sellResponse.orderID;
+                stateObj.active = true; 
+                stateObj.side = side; 
+                stateObj.tokenId = tokenId; 
+                stateObj.entryPrice = askPrice; 
+                stateObj.sellOrderId = sellResponse.orderID;
             } else {
-                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! You are holding shares.`);
+                // FIXED BUG: Lock the phase so it doesn't infinite-buy if the sell API fails.
+                console.error(`[CRITICAL] Phase ${phaseLevel} Limit Sell failed! Locking phase to prevent infinite buys.`);
+                const stateObj = phaseLevel === 1 ? phase1 : phase2;
+                stateObj.active = true; 
+                stateObj.side = side; 
+                stateObj.tokenId = tokenId; 
+                stateObj.entryPrice = askPrice;
+                // sellOrderId remains null, but grace period dump will catch it by tokenId later
             }
         } else {
             console.log(`[PHASE ${phaseLevel} REJECTED] Ghost liquidity or insufficient funds. Order killed.`);
@@ -238,7 +249,11 @@ async function runLiveTrader() {
             for (const p of [phase1, phase2]) {
                 if (p.active) {
                     console.log(`\n[GRACE PERIOD] Canceling Maker Sell to avoid trap...`);
-                    try { await clobClient.cancelOrder({ orderID: p.sellOrderId }); } catch (e) {}
+                    try { 
+                        if (p.sellOrderId) {
+                            await clobClient.cancelOrder({ orderID: p.sellOrderId }); 
+                        }
+                    } catch (e) {}
 
                     console.log(`[GRACE PERIOD DUMP] Firing Market Sell to liquidate shares...`);
                     try {
