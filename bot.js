@@ -14,15 +14,20 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRATEGY CONFIG ---
-const ENTRY_PRICE_MAX        = 0.35;   
-const ENTRY_PRICE_SECOND     = 0.25;   
 const TAKE_PROFIT_CENTS      = 0.05;   
 
-// --- UPDATED VOLATILITY STOP LOSS SETTINGS ---
-const MAX_DRAWDOWN_EXTREME   = 0.25;   // Allowed drop when price is near 0.50 (High Volatility)
-const MAX_DRAWDOWN_LOW       = 0.05;   // Allowed drop when price is far from 0.50 (Low Volatility)
+// --- VOLATILITY (PROBABILITY) SETTINGS ---
+// $0.50 represents maximum volatility (a 50/50 coin toss).
+// Distance is how far the price is from $0.50.
 
-const ENTRY_TIME             = 210;    
+// Entry Settings (Enter when price gets close to $0.50)
+const ENTRY_DISTANCE_P1      = 0.15;   // Enter Phase 1 if price is between $0.35 and $0.65
+const ENTRY_DISTANCE_P2      = 0.05;   // Enter Phase 2 if price is between $0.45 and $0.55
+
+// Stop Loss Settings
+const MAX_DRAWDOWN_EXTREME   = 0.25;   // Allowed drop when volatility is extreme (price near $0.50)
+const MAX_DRAWDOWN_LOW       = 0.05;   // Allowed drop when volatility is low (price far from $0.50)
+
 const BET_SIZE_USD           = 1.00;   // Safest size for live testing
 const TAKER_FEE_BPS          = 150;    // 1.5% fee
 
@@ -199,7 +204,7 @@ async function loadNextMarket() {
         const now = Date.now();
         const validMarket = sorted.find(m => {
             const timeRemaining = Math.floor((new Date(m.end_date_iso).getTime() - now) / 1000);
-            return timeRemaining > ENTRY_TIME;
+            return timeRemaining > 10; // Ensure market hasn't instantly expired
         });
 
         if (validMarket) {
@@ -231,9 +236,6 @@ async function loadNextMarket() {
 function handleMarketUpdate(data) {
     if (!data) return;
 
-    const now = Date.now();
-    const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
-
     const bestAsk = data.asks && data.asks.length > 0 ? parseFloat(data.asks[0].price) : null;
     const bestBid = data.bids && data.bids.length > 0 ? parseFloat(data.bids[0].price) : null;
     const tokenId = data.asset_id;
@@ -256,11 +258,11 @@ function handleMarketUpdate(data) {
         if (p.active && p.tokenId === tokenId && bestBid !== null) {
             if (p.sellOrderId === "pending_smart_exit" || p.sellOrderId === "pending_stop_loss") continue;
 
-            // Measure how close we are to 0.50 (the point of maximum volatility)
-            const distanceFromStrike = Math.abs(0.50 - bestBid);
+            // Measure how close we are to 0.50 (maximum volatility)
+            const distanceFromStrikeBid = Math.abs(0.50 - bestBid);
             
             // Convert distance to a multiplier: 1 at 0.50, 0 at limits.
-            const volatilityMultiplier = 1 - (distanceFromStrike / 0.50);
+            const volatilityMultiplier = 1 - (distanceFromStrikeBid / 0.50);
 
             // Dynamically scale allowed drawdown based on volatility
             const dynamicTolerance = MAX_DRAWDOWN_LOW + ((MAX_DRAWDOWN_EXTREME - MAX_DRAWDOWN_LOW) * volatilityMultiplier);
@@ -275,15 +277,16 @@ function handleMarketUpdate(data) {
         }
     }
 
-    // --- 3. NEW ENTRY LOGIC ---
-    if (secondsLeft < ENTRY_TIME) return;
-
+    // --- 3. PROBABILITY-BASED VOLATILITY ENTRY LOGIC ---
     if (bestAsk !== null) {
-        if (!phase1.active && bestAsk <= ENTRY_PRICE_MAX) {
+        // Measure how close the ask is to 0.50 to detect high volatility for entry
+        const distanceFromStrikeAsk = Math.abs(0.50 - bestAsk);
+
+        if (!phase1.active && distanceFromStrikeAsk <= ENTRY_DISTANCE_P1) {
             executeTradeSequence(side, tokenId, bestAsk, 1);
         }
 
-        if (!phase2.active && bestAsk <= ENTRY_PRICE_SECOND) {
+        if (!phase2.active && distanceFromStrikeAsk <= ENTRY_DISTANCE_P2) {
             executeTradeSequence(side, tokenId, bestAsk, 2);
         }
     }
@@ -293,7 +296,7 @@ function handleMarketUpdate(data) {
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
-    console.log("Booting HFT Live Engine (Viem + Anti-Spam Optimized)...");
+    console.log("Booting Volatility-Driven Engine (Viem + Anti-Spam Optimized)...");
     
     const account = privateKeyToAccount(rawKey);
     const walletClient = createWalletClient({ account, chain: polygon, transport: http() });
@@ -350,9 +353,9 @@ async function runLiveTrader() {
         const now = Date.now();
         const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-        if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) loadNextMarket();
+        // Time is strictly used to roll over into the next active market now
+        if (secondsLeft === 0 && !isSearchingNextMarket) loadNextMarket();
 
-        // Print alive status every 10 seconds (Grace Period dump has been completely removed)
         if (secondsLeft % 10 === 0) {
             console.log(`[LIVE] Time: ${secondsLeft}s | P1: ${phase1.active ? 'HOLD' : 'HUNT'} | P2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
         }
