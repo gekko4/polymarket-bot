@@ -17,10 +17,12 @@ const HOST = 'https://clob.polymarket.com';
 const ENTRY_PRICE_MAX        = 0.35;   
 const ENTRY_PRICE_SECOND     = 0.25;   
 const TAKE_PROFIT_CENTS      = 0.05;   
-const MAX_DRAWDOWN_EARLY     = 0.20;   // Allowed price drop early in the trade
-const MAX_DRAWDOWN_LATE      = 0.05;   // Allowed price drop right before grace period
+
+// --- UPDATED VOLATILITY STOP LOSS SETTINGS ---
+const MAX_DRAWDOWN_EXTREME   = 0.25;   // Allowed drop when price is near 0.50 (High Volatility)
+const MAX_DRAWDOWN_LOW       = 0.05;   // Allowed drop when price is far from 0.50 (Low Volatility)
+
 const ENTRY_TIME             = 210;    
-const GRACE_PERIOD_END       = 110;    
 const BET_SIZE_USD           = 1.00;   // Safest size for live testing
 const TAKER_FEE_BPS          = 150;    // 1.5% fee
 
@@ -40,7 +42,7 @@ let marketEndTime = 0;
 let clobClient;
 
 // ─────────────────────────────────────────────────────────
-// EXECUTION: ENTRY & EXIT (PLAN A)
+// EXECUTION: ENTRY & EXIT (PLAN A: TAKE PROFIT)
 // ─────────────────────────────────────────────────────────
 async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
     const phaseLock = phaseLevel === 1 ? isExecutingP1 : isExecutingP2;
@@ -100,7 +102,7 @@ async function executeTradeSequence(side, tokenId, askPrice, phaseLevel) {
 }
 
 // ─────────────────────────────────────────────────────────
-// SMART EXIT HANDLER (PLAN B: The Hunter)
+// SMART EXIT HANDLER (PLAN B: The Take Profit Hunter)
 // ─────────────────────────────────────────────────────────
 async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
     phaseObj.sellOrderId = "pending_smart_exit";
@@ -132,7 +134,7 @@ async function executeSmartExit(phaseObj, bidPrice, phaseLevel) {
 }
 
 // ─────────────────────────────────────────────────────────
-// TIME-DECAYING STOP LOSS EXECUTOR
+// PROBABILITY-BASED STOP LOSS EXECUTOR
 // ─────────────────────────────────────────────────────────
 async function executeStopLossDump(phaseObj, phaseLevel) {
     const restingOrderId = phaseObj.sellOrderId;
@@ -249,23 +251,25 @@ function handleMarketUpdate(data) {
         }
     }
 
-    // --- 2. TIME-DECAYING DYNAMIC STOP LOSS ---
+    // --- 2. PROBABILITY-BASED DYNAMIC STOP LOSS ---
     for (const p of [phase1, phase2]) {
         if (p.active && p.tokenId === tokenId && bestBid !== null) {
             if (p.sellOrderId === "pending_smart_exit" || p.sellOrderId === "pending_stop_loss") continue;
 
-            const timeWindow = ENTRY_TIME - GRACE_PERIOD_END; 
-            const timeRemainingInWindow = Math.max(0, secondsLeft - GRACE_PERIOD_END);
+            // Measure how close we are to 0.50 (the point of maximum volatility)
+            const distanceFromStrike = Math.abs(0.50 - bestBid);
             
-            // If we are past the grace period, fraction is 0. If brand new, fraction is 1.
-            const timeFraction = Math.min(1, timeRemainingInWindow / timeWindow); 
+            // Convert distance to a multiplier: 1 at 0.50, 0 at limits.
+            const volatilityMultiplier = 1 - (distanceFromStrike / 0.50);
 
-            const dynamicTolerance = MAX_DRAWDOWN_LATE + (MAX_DRAWDOWN_EARLY - MAX_DRAWDOWN_LATE) * timeFraction;
+            // Dynamically scale allowed drawdown based on volatility
+            const dynamicTolerance = MAX_DRAWDOWN_LOW + ((MAX_DRAWDOWN_EXTREME - MAX_DRAWDOWN_LOW) * volatilityMultiplier);
+            
             const currentDrawdown = p.entryPrice - bestBid;
 
             if (currentDrawdown > dynamicTolerance) {
                 console.log(`\n[DYNAMIC STOP-LOSS ALERT] Phase ${p === phase1 ? 1 : 2} breached tolerance!`);
-                console.log(` -> Drawdown: -$${currentDrawdown.toFixed(2)} | Allowed for time left: -$${dynamicTolerance.toFixed(2)}`);
+                console.log(` -> Drawdown: -$${currentDrawdown.toFixed(2)} | Allowed for current volatility: -$${dynamicTolerance.toFixed(2)}`);
                 executeStopLossDump(p, p === phase1 ? 1 : 2); 
             }
         }
@@ -348,34 +352,9 @@ async function runLiveTrader() {
 
         if (secondsLeft <= ENTRY_TIME && !isSearchingNextMarket) loadNextMarket();
 
-        // --- THE MARKET DUMP LOGIC (Grace Period) ---
-        if (secondsLeft <= GRACE_PERIOD_END) {
-            for (const p of [phase1, phase2]) {
-                if (p.active) {
-                    console.log(`\n[GRACE PERIOD] Canceling Maker Sell to avoid trap...`);
-                    try { 
-                        if (p.sellOrderId && p.sellOrderId !== "pending_smart_exit" && p.sellOrderId !== "pending_stop_loss") {
-                            await clobClient.cancelOrder({ orderID: p.sellOrderId }); 
-                        }
-                    } catch (e) {}
-
-                    console.log(`[GRACE PERIOD DUMP] Firing Market Sell to liquidate shares...`);
-                    try {
-                        const shares = (BET_SIZE_USD / p.entryPrice).toFixed(2);
-                        const dumpOrder = await clobClient.createOrder({
-                            tokenID: p.tokenId, price: 0.01, side: 'SELL', size: shares, feeRateBps: TAKER_FEE_BPS, orderType: OrderType.FOK 
-                        });
-                        await clobClient.postOrder(dumpOrder);
-                        console.log(`[LIQUIDATED] Dumped bag to the highest bidder.`);
-                    } catch (e) { console.error(`[DUMP FAILED]`, e.message); }
-
-                    p.active = false; 
-                }
-            }
-        } else {
-            if (secondsLeft % 10 === 0) {
-                console.log(`[LIVE] Time: ${secondsLeft}s | P1: ${phase1.active ? 'HOLD' : 'HUNT'} | P2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
-            }
+        // Print alive status every 10 seconds (Grace Period dump has been completely removed)
+        if (secondsLeft % 10 === 0) {
+            console.log(`[LIVE] Time: ${secondsLeft}s | P1: ${phase1.active ? 'HOLD' : 'HUNT'} | P2: ${phase2.active ? 'HOLD' : 'HUNT'}`);
         }
     }, 1000);
 }
