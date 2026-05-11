@@ -13,25 +13,22 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
 
-// --- STRIKE PROXIMITY CONFIG (0.50 is Max Volatility) ---
-// Multiplier: 1.0 means exactly at $0.50. 0.0 means at $0.00 or $1.00.
-
-// ENTRY: How close to $0.50 does it need to be to trigger an entry?
-const ENTRY_VOLATILITY_THRESHOLD = 0.70; // e.g., 0.70 means price is between $0.35 and $0.65
-
-// TAKE PROFIT: Scales dynamically. 
-const MIN_TP_CENTS = 0.02; // Take profit is tight (2c) when market is dead (far from 0.50)
-const MAX_TP_CENTS = 0.10; // Take profit stretches (10c) when market is violent (near 0.50)
-
-// STOP LOSS: Scales dynamically.
-const MIN_SL_CENTS = 0.03; // Stop loss is tight (3c) when market is dead
-const MAX_SL_CENTS = 0.20; // Stop loss stretches (20c) to survive chop when near 0.50
+// --- STRIKE PROXIMITY CONFIG ---
+const ENTRY_VOLATILITY_THRESHOLD = 0.70; // Volatility multiplier threshold
+const MIN_TP_CENTS = 0.03; // Increased to offset 1.8% fees safely
+const MAX_TP_CENTS = 0.12; 
+const MIN_SL_CENTS = 0.03; 
+const MAX_SL_CENTS = 0.20; 
 
 const BET_SIZE_USD = 1.00;   
-const TAKER_FEE_BPS = 150;    // 1.5% fee
+const TAKER_FEE_BPS = 180; // Peak crypto network fee safety buffer (1.8%)
 
-// --- STATE MANAGEMENT ---
+// --- STATE & TREND MANAGEMENT ---
 let trade = { active: false, side: null, tokenId: null, entryPrice: 0 };
+
+// Independent momentum trackers for YES and NO
+let lastMidpoint = { YES: 0, NO: 0 };
+let trend = { YES: 0, NO: 0 }; // Positive = Price Rising, Negative = Price Falling
 
 let isExecuting = false;
 let isSearchingNextMarket = false;
@@ -44,17 +41,22 @@ let marketEndTime = 0;
 let clobClient;
 
 // ─────────────────────────────────────────────────────────
-// UNIVERSAL EXECUTION ENGINE (Market Taker Only)
+// UNIVERSAL EXECUTION ENGINE (With Liquidity Check)
 // ─────────────────────────────────────────────────────────
-async function executeFOK(tokenId, price, side, actionLog) {
+async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
     if (isExecuting) return false;
     isExecuting = true;
 
     try {
-        // Calculate shares based on entry price if selling, or live price if buying
         const refPrice = side === 'BUY' ? price : trade.entryPrice;
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
+        // Depth Check: Ensure book has enough liquidity to actually fill our size
+        if (parseFloat(sizeNeeded) < parseFloat(shares)) {
+            console.log(`[DEPTH WARNING] Insufficient liquidity for ${actionLog}. Required: ${shares}, Available: ${sizeNeeded}`);
+            return false;
+        }
+
         console.log(`\n[${actionLog}] Firing FOK ${side} @ $${price.toFixed(2)}...`);
 
         const order = await clobClient.createOrder({
@@ -81,34 +83,59 @@ async function executeFOK(tokenId, price, side, actionLog) {
 // DYNAMIC NEAR-STRIKE LOGIC
 // ─────────────────────────────────────────────────────────
 function handleMarketUpdate(data) {
-    if (!data) return;
+    if (!data || !data.asks || !data.bids) return;
 
-    const bestAsk = data.asks && data.asks.length > 0 ? parseFloat(data.asks[0].price) : null;
-    const bestBid = data.bids && data.bids.length > 0 ? parseFloat(data.bids[0].price) : null;
+    const bestAsk = parseFloat(data.asks[0].price);
+    const bestAskSize = data.asks[0].size;
+    const bestBid = parseFloat(data.bids[0].price);
+    const bestBidSize = data.bids[0].size;
+    const currentMid = (bestAsk + bestBid) / 2;
+    
     const tokenId = data.asset_id;
     const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
 
-    if (bestAsk === null || bestBid === null) return;
+    // Track independent momentum for this specific token
+    if (lastMidpoint[side] !== 0) {
+        trend[side] = currentMid - lastMidpoint[side];
+    }
+    lastMidpoint[side] = currentMid;
+
+    // Time calculations for the Eject Seat
+    const now = Date.now();
+    const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
     // --- 1. DYNAMIC ENTRY LOGIC ---
-    if (!trade.active && !isExecuting) {
+    if (!trade.active && !isExecuting && secondsLeft > 10) {
         // Calculate how close the Ask is to the $0.50 meat-grinder
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
-        const volatilityMultiplierAsk = 1 - (distanceFromCenterAsk / 0.50);
+        const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        // If the multiplier hits the threshold, the market is highly volatile. Enter immediately.
-        if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD) {
+        // Only enter if volatility is high AND this specific token's price is rising
+        const isTrendingCorrectly = trend[side] > 0;
+
+        if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly) {
             console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} (Threshold: ${ENTRY_VOLATILITY_THRESHOLD})`);
-            executeFOK(tokenId, bestAsk, 'BUY', 'ENTRY').then(success => {
+            executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(success => {
                 if (success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk };
             });
         }
         return; 
     }
 
-    // --- 2. DYNAMIC EXIT LOGIC (TP & SL) ---
+    // --- 2. DYNAMIC EXIT LOGIC (TP, SL & EJECT SEAT) ---
     if (trade.active && trade.tokenId === tokenId && !isExecuting) {
         
+        // -- THE EJECT SEAT (NEVER WAIT FOR RESOLUTION) --
+        if (secondsLeft <= 5) {
+            console.log(`\n[⚠️ EXPIRATION BAILOUT] Market ending. Dumping bag to avoid resolution!`);
+            // Undercut the bid by 2 cents to guarantee an instant FOK fill before the buzzer
+            const bailoutPrice = Math.max(0.01, bestBid - 0.02);
+            executeFOK(tokenId, bailoutPrice, 'SELL', bestBidSize, 'BAILOUT').then(success => {
+                if (success) trade = { active: false, side: null, tokenId: null, entryPrice: 0 };
+            });
+            return;
+        }
+
         // Calculate how close the Bid is to the $0.50 meat-grinder
         const distanceToCenterBid = Math.abs(0.50 - bestBid);
         const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
@@ -117,15 +144,15 @@ function handleMarketUpdate(data) {
         const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
         const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
 
-        // Include taker fees in the TP calculation to ensure actual profitability
-        const feeCost = trade.entryPrice * (TAKER_FEE_BPS / 10000);
+        // Include entry and exit taker fees in the TP calculation to ensure actual profitability
+        const feeCost = trade.entryPrice * (TAKER_FEE_BPS / 10000) * 2;
         const targetProfitPrice = trade.entryPrice + dynamicTP_Gap + feeCost;
         const stopLossPrice = trade.entryPrice - dynamicSL_Gap;
 
         // TAKE PROFIT TRIGGER
         if (bestBid >= targetProfitPrice) {
             console.log(`\n[DYNAMIC TP HIT] Volatility Mult: ${volatilityMultiplierBid.toFixed(2)} | Target: $${targetProfitPrice.toFixed(2)}`);
-            executeFOK(tokenId, bestBid, 'SELL', 'TAKE PROFIT').then(success => {
+            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TAKE PROFIT').then(success => {
                 if (success) trade = { active: false, side: null, tokenId: null, entryPrice: 0 };
             });
             return;
@@ -136,7 +163,7 @@ function handleMarketUpdate(data) {
             console.log(`\n[DYNAMIC SL HIT] Volatility Mult: ${volatilityMultiplierBid.toFixed(2)} | Floor: $${stopLossPrice.toFixed(2)}`);
             // Sell at bestBid - 0.01 to ensure execution without doing a full 0.01 market dump
             const bailOutPrice = Math.max(0.01, bestBid - 0.01); 
-            executeFOK(tokenId, bailOutPrice, 'SELL', 'STOP LOSS').then(success => {
+            executeFOK(tokenId, bailOutPrice, 'SELL', bestBidSize, 'STOP LOSS').then(success => {
                 if (success) trade = { active: false, side: null, tokenId: null, entryPrice: 0 };
             });
             return;
@@ -172,6 +199,10 @@ async function loadNextMarket() {
             currentNoToken  = validMarket.tokens.find(t => t.outcome === 'No').token_id;
             marketEndTime   = new Date(validMarket.end_date_iso).getTime();
             
+            // Reset state trackers for the new market
+            lastMidpoint = { YES: 0, NO: 0 };
+            trend = { YES: 0, NO: 0 };
+
             console.log(`[MARKET LOADED] Subscribing to: ${validMarket.question}`);
             
             if (global.wsMarket && global.wsMarket.readyState === WebSocket.OPEN) {
@@ -226,7 +257,7 @@ async function runLiveTrader() {
 
         // Print alive status every 10 seconds
         if (Math.floor(now / 1000) % 10 === 0) {
-            const status = trade.active ? `HOLDING $${trade.entryPrice.toFixed(2)}` : 'HUNTING STRIKE VOLATILITY';
+            const status = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING STRIKE VOLATILITY';
             console.log(`[LIVE] Status: ${status}`);
         }
     }, 1000);
