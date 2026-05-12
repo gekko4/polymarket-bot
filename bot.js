@@ -210,42 +210,53 @@ function handleMarketUpdate(data) {
 async function loadNextMarket() {
     if (isSearchingNextMarket) return;
     isSearchingNextMarket = true;
-    console.log('\n[SCANNER] Searching for the next active 5-Min BTC Market...');
+    console.log('\n[SCANNER] Calculating the next active 5-Min BTC Market...');
     
     try {
-        const markets = await clobClient.getMarkets();
-        const btcMarkets = markets.data.filter(m => 
-            m.active && !m.closed && m.event_slug && m.event_slug.toLowerCase().includes('btc-updown-5m')
-        );
+        // 1. Calculate the current 5-minute interval's ending Unix timestamp
+        const nowSec = Math.floor(Date.now() / 1000);
+        const remainder = nowSec % 300;
+        const nextIntervalSec = nowSec + (300 - remainder);
+        const eventSlug = `btc-updown-5m-${nextIntervalSec}`;
 
-        if (!btcMarkets.length) {
-            searchCooldownTimer = Date.now() + 30000;
+        // 2. Query the Gamma API directly for this specific calculated market
+        const response = await fetch(`https://gamma-api.polymarket.com/events?slug=${eventSlug}`);
+        const events = await response.json();
+
+        if (!events || events.length === 0 || !events[0].markets || events[0].markets.length === 0) {
+            console.log(`[SCANNER] Market ${eventSlug} not fully indexed yet. Retrying in 5s...`);
+            searchCooldownTimer = Date.now() + 5000;
             return;
         }
 
-        const now = Date.now();
-        const sorted = btcMarkets.sort((a, b) => new Date(a.end_date_iso) - new Date(b.end_date_iso));
-        const validMarket = sorted.find(m => new Date(m.end_date_iso).getTime() > now + 10000); 
+        const validEvent = events[0];
+        const validMarket = validEvent.markets[0]; 
 
-        if (validMarket) {
-            currentYesToken = validMarket.tokens.find(t => t.outcome === 'Yes').token_id;
-            currentNoToken  = validMarket.tokens.find(t => t.outcome === 'No').token_id;
-            marketEndTime   = new Date(validMarket.end_date_iso).getTime();
+        // 3. Extract the Token IDs (Index 0 is Yes, Index 1 is No)
+        let yesTokenId = validMarket.clobTokenIds[0];
+        let noTokenId = validMarket.clobTokenIds[1];
+
+        if (yesTokenId && noTokenId) {
+            currentYesToken = yesTokenId;
+            currentNoToken  = noTokenId;
+            marketEndTime   = nextIntervalSec * 1000; 
             
+            // Reset state trackers
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
 
-            console.log(`[MARKET LOADED] Subscribing to: ${validMarket.question}`);
+            console.log(`[MARKET LOADED] Subscribing to: ${validEvent.title}`);
             
             if (global.wsMarket && global.wsMarket.readyState === WebSocket.OPEN) {
                 global.wsMarket.send(JSON.stringify({ type: "market", assets_ids: [currentYesToken, currentNoToken] }));
             }
         } else {
-            searchCooldownTimer = Date.now() + 30000;
+            console.log(`[SCANNER] Token IDs missing for ${eventSlug}.`);
+            searchCooldownTimer = Date.now() + 5000;
         }
     } catch (err) {
         console.error('[MARKET ERROR]', err.message);
-        searchCooldownTimer = Date.now() + 30000; 
+        searchCooldownTimer = Date.now() + 5000; 
     } finally {
         isSearchingNextMarket = false;
     }
