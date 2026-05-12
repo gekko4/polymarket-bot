@@ -272,6 +272,9 @@ async function loadNextMarket() {
 // ─────────────────────────────────────────────────────────
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────
+// BOOT SEQUENCE & TIMERS
+// ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
     console.log("Booting Pure Dynamic Near-Strike Engine in PAPER TRADING MODE...");
     
@@ -286,7 +289,15 @@ async function runLiveTrader() {
     const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
     global.wsMarket = wsMarket; 
     
-    wsMarket.on('open', () => console.log("[WS] Market Stream Connected."));
+    // THE FIX: Added logic to subscribe right when the connection opens if tokens are ready
+    wsMarket.on('open', () => {
+        console.log("[WS] Market Stream Connected.");
+        if (currentYesToken && currentNoToken) {
+            console.log(`[WS] Late connection detected. Pushing subscription for current tokens...`);
+            wsMarket.send(JSON.stringify({ type: "market", assets_ids: [currentYesToken, currentNoToken] }));
+        }
+    });
+
     wsMarket.on('message', (msg) => {
         const data = JSON.parse(msg);
         if (data.event === 'book' || data.event === 'price_change') handleMarketUpdate(data);
