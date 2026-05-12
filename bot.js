@@ -15,8 +15,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-// Dropped to 0.10 for testing. This allows entries from $0.05 to $0.95.
-const ENTRY_VOLATILITY_THRESHOLD = 0.10; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.10; // Left at 0.10 so it fires immediately for testing!
 const MIN_TP_CENTS = 0.03; 
 const MAX_TP_CENTS = 0.12; 
 const MIN_SL_CENTS = 0.03; 
@@ -32,14 +31,14 @@ let stats = {
     totalTrades: 0,
     wins: 0,
     losses: 0,
-    startingBalance: 100.00, // Simulated $100 starting bankroll
+    startingBalance: 100.00,
     currentBalance: 100.00
 };
 
 // Independent momentum & price trackers
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
-let currentPrices = { YES: 0, NO: 0 }; // Added for the radar
+let currentPrices = { YES: 0, NO: 0 }; 
 
 let isExecuting = false;
 let isSearchingNextMarket = false;
@@ -51,7 +50,6 @@ let marketEndTime = 0;
 
 let clobClient;
 
-// Initialize CSV Log File
 const logFile = 'paper_trades_log.csv';
 if (!fs.existsSync(logFile)) {
     fs.writeFileSync(logFile, "Date,Market,Action,Entry_Price,Exit_Price,Shares,PnL_USD,Balance_USD,Win_Rate_Pct\n");
@@ -63,7 +61,6 @@ if (!fs.existsSync(logFile)) {
 function logCompletedTrade(exitReason, exitPrice) {
     const isWin = exitPrice > trade.entryPrice;
     
-    // Calculate exact PnL including fees for both entry and exit
     const grossReturn = exitPrice * trade.shares;
     const entryCost = trade.entryPrice * trade.shares;
     const totalFees = (entryCost * (TAKER_FEE_BPS / 10000)) + (grossReturn * (TAKER_FEE_BPS / 10000));
@@ -88,11 +85,9 @@ function logCompletedTrade(exitReason, exitPrice) {
     console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
     console.log(`========================================\n`);
 
-    // Write to CSV
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     fs.appendFileSync(logFile, logEntry);
 
-    // Reset Trade State
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0 };
 }
 
@@ -113,8 +108,6 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
         }
 
         console.log(`\n[PAPER SIMULATION] ${actionLog} ${side} @ $${price.toFixed(3)}...`);
-        
-        // SIMULATED EXECUTION
         console.log(`[PAPER SUCCESS] ${actionLog} filled instantly.`);
         return { success: true, sharesFilled: shares };
 
@@ -130,16 +123,21 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
 // DYNAMIC NEAR-STRIKE LOGIC
 // ─────────────────────────────────────────────────────────
 function handleMarketUpdate(data) {
-    if (!data || !data.asks || !data.bids || data.asks.length === 0 || data.bids.length === 0) return;
+    if (!data) return;
 
-    const bestAsk = parseFloat(data.asks[0].price);
-    const bestAskSize = data.asks[0].size;
-    const bestBid = parseFloat(data.bids[0].price);
-    const bestBidSize = data.bids[0].size;
+    const bestAsk = data.bestAsk;
+    const bestAskSize = data.bestAskSize;
+    const bestBid = data.bestBid;
+    const bestBidSize = data.bestBidSize;
+    
+    // Ignore updates with broken/empty data
+    if (isNaN(bestAsk) || isNaN(bestBid)) return;
+
     const currentMid = (bestAsk + bestBid) / 2;
     
     const tokenId = data.asset_id;
-    const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
+    const side = tokenId === currentYesToken ? 'YES' : (tokenId === currentNoToken ? 'NO' : null);
+    if (!side) return; 
 
     // Update the radar price
     currentPrices[side] = bestAsk;
@@ -190,7 +188,6 @@ function handleMarketUpdate(data) {
         const targetProfitPrice = trade.entryPrice + dynamicTP_Gap + feeCost;
         const stopLossPrice = trade.entryPrice - dynamicSL_Gap;
 
-        // TAKE PROFIT TRIGGER
         if (bestBid >= targetProfitPrice) {
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TAKE PROFIT').then(res => {
                 if (res.success) logCompletedTrade("TAKE PROFIT", bestBid);
@@ -198,7 +195,6 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        // STOP LOSS TRIGGER
         if (bestBid <= stopLossPrice) {
             const slipPrice = Math.max(0.01, bestBid - 0.01); 
             executeFOK(tokenId, slipPrice, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
@@ -220,8 +216,6 @@ async function loadNextMarket() {
     try {
         const nowSec = Math.floor(Date.now() / 1000);
         const remainder = nowSec % 300;
-        
-        // Round down to the start of the current 5-minute window
         const currentIntervalStartSec = nowSec - remainder;
         const currentIntervalEndSec = currentIntervalStartSec + 300;
         
@@ -256,7 +250,6 @@ async function loadNextMarket() {
             currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`[MARKET LOADED] Subscribing to: ${validEvent.title}`);
-            console.log(`[DEBUG] YES Token: ${yesTokenId.substring(0, 8)}... | NO Token: ${noTokenId.substring(0, 8)}...`);
             
             if (global.wsMarket && global.wsMarket.readyState === WebSocket.OPEN) {
                 global.wsMarket.send(JSON.stringify({ type: "market", assets_ids: [currentYesToken, currentNoToken] }));
@@ -290,18 +283,51 @@ async function runLiveTrader() {
     const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
     global.wsMarket = wsMarket; 
     
-    // Added logic to subscribe right when the connection opens if tokens are ready
     wsMarket.on('open', () => {
         console.log("[WS] Market Stream Connected.");
+        
+        // --- THE FIX: KEEP THE CONNECTION ALIVE ---
+        setInterval(() => {
+            if (wsMarket.readyState === WebSocket.OPEN) wsMarket.send("PING");
+        }, 10000);
+
         if (currentYesToken && currentNoToken) {
             console.log(`[WS] Late connection detected. Pushing subscription for current tokens...`);
             wsMarket.send(JSON.stringify({ type: "market", assets_ids: [currentYesToken, currentNoToken] }));
         }
     });
 
+    // --- THE FIX: HANDLE EVENT_TYPE AND MAP SCHEMA DIFFERENCES ---
     wsMarket.on('message', (msg) => {
-        const data = JSON.parse(msg);
-        if (data.event === 'book' || data.event === 'price_change') handleMarketUpdate(data);
+        const textMsg = msg.toString();
+        if (textMsg === "PONG") return; 
+        
+        try {
+            const data = JSON.parse(textMsg);
+            
+            if (data.event_type === 'book' && data.asks.length > 0 && data.bids.length > 0) {
+                handleMarketUpdate({
+                    asset_id: data.asset_id,
+                    bestAsk: parseFloat(data.asks[0].price),
+                    bestAskSize: parseFloat(data.asks[0].size),
+                    bestBid: parseFloat(data.bids[0].price),
+                    bestBidSize: parseFloat(data.bids[0].size)
+                });
+            } 
+            else if (data.event_type === 'price_change' && data.price_changes && data.price_changes.length > 0) {
+                for (const pc of data.price_changes) {
+                    handleMarketUpdate({
+                        asset_id: pc.asset_id,
+                        bestAsk: parseFloat(pc.best_ask),
+                        bestAskSize: 9999, // Simulated infinite liquidity for paper test
+                        bestBid: parseFloat(pc.best_bid),
+                        bestBidSize: 9999
+                    });
+                }
+            }
+        } catch (err) {
+            // Silently ignore parse errors
+        }
     });
 
     await loadNextMarket();
