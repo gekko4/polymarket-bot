@@ -15,7 +15,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.80; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.90; // TIGHTENED FROM 0.80 TO 0.90
 const MAX_ALLOWED_SPREAD = 0.05; 
 const MIN_TP_CENTS = 0.03; 
 const MAX_TP_CENTS = 0.12; 
@@ -41,7 +41,7 @@ let trend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
 
 let isExecuting = false;
-let isExiting = false; // THE FIX: Ghost trade padlock
+let isExiting = false; 
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
 
@@ -88,7 +88,7 @@ function logCompletedTrade(exitReason, exitPrice) {
 
     // Reset Trade State
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0 };
-    isExiting = false; // THE FIX: Unlock the door for the next trade
+    isExiting = false; 
 }
 
 async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
@@ -159,7 +159,6 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    // THE FIX: Added && !isExiting to ensure it ignores batched loops once a sell is triggered
     if (trade.active && trade.tokenId === tokenId && !isExecuting && !isExiting) {
         
         if (secondsLeft <= 5) {
@@ -168,7 +167,7 @@ function handleMarketUpdate(data) {
             const bailoutPrice = Math.max(0.01, bestBid - 0.02);
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'BAILOUT').then(res => {
                 if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bestBid);
-                else isExiting = false; // Unlock if it fails for some reason
+                else isExiting = false; 
             });
             return;
         }
