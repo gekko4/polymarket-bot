@@ -41,6 +41,7 @@ let trend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
 
 let isExecuting = false;
+let isExiting = false; // THE FIX: Ghost trade padlock
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
 
@@ -85,7 +86,9 @@ function logCompletedTrade(exitReason, exitPrice) {
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     fs.appendFileSync(logFile, logEntry);
 
+    // Reset Trade State
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0 };
+    isExiting = false; // THE FIX: Unlock the door for the next trade
 }
 
 async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
@@ -100,7 +103,7 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
             return false;
         }
 
-        console.log(`\n[PAPER SIMULATION] ${actionLog} ${side} @ $${price.toFixed(3)}...`);
+        console.log(`[PAPER SIMULATION] ${actionLog} ${side} @ $${price.toFixed(3)}...`);
         console.log(`[PAPER SUCCESS] ${actionLog} filled instantly.`);
         return { success: true, sharesFilled: shares };
 
@@ -139,7 +142,7 @@ function handleMarketUpdate(data) {
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    if (!trade.active && !isExecuting && secondsLeft > 10) {
+    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 10) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
@@ -156,13 +159,16 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    if (trade.active && trade.tokenId === tokenId && !isExecuting) {
+    // THE FIX: Added && !isExiting to ensure it ignores batched loops once a sell is triggered
+    if (trade.active && trade.tokenId === tokenId && !isExecuting && !isExiting) {
         
         if (secondsLeft <= 5) {
             console.log(`\n[⚠️ EXPIRATION BAILOUT] Market ending. Dumping bag to avoid resolution!`);
+            isExiting = true;
             const bailoutPrice = Math.max(0.01, bestBid - 0.02);
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'BAILOUT').then(res => {
                 if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bestBid);
+                else isExiting = false; // Unlock if it fails for some reason
             });
             return;
         }
@@ -178,26 +184,27 @@ function handleMarketUpdate(data) {
         const stopLossPrice = trade.entryPrice - dynamicSL_Gap;
 
         if (bestBid >= targetProfitPrice) {
+            isExiting = true;
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TAKE PROFIT').then(res => {
                 if (res.success) logCompletedTrade("TAKE PROFIT", bestBid);
+                else isExiting = false;
             });
             return;
         }
 
-        // --- THE FIX: ANTI-WICK ARMOR ---
-        // Ensure the bid isn't a flash-crash "stink bid" before selling
         const minReasonableBid = stopLossPrice - 0.10; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
+            isExiting = true;
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
                 if (res.success) logCompletedTrade("STOP LOSS", bestBid); 
+                else isExiting = false;
             });
             return;
         }
     }
 }
 
-// --- THE FIX: DEDICATED WEBSOCKET CONNECTION MANAGER ---
 function connectWebsocket() {
     if (global.wsMarket) {
         try { global.wsMarket.terminate(); } catch(e) {}
@@ -285,8 +292,6 @@ async function loadNextMarket() {
             currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`[MARKET LOADED] Subscribing to: ${validEvent.title}`);
-            
-            // Force a fresh, clean WebSocket connection for the new market
             connectWebsocket();
 
         } else {
