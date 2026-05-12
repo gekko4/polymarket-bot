@@ -208,7 +208,6 @@ function handleMarketUpdate(data) {
         }
     }
 }
-
 // ─────────────────────────────────────────────────────────
 // MARKET ROLLOVER ENGINE
 // ─────────────────────────────────────────────────────────
@@ -235,8 +234,13 @@ async function loadNextMarket() {
         const validEvent = events[0];
         const validMarket = validEvent.markets[0]; 
 
-        let yesTokenId = validMarket.clobTokenIds[0];
-        let noTokenId = validMarket.clobTokenIds[1];
+        // THE FIX: Parse the JSON string into an array before extracting the IDs
+        let parsedTokens = typeof validMarket.clobTokenIds === 'string' 
+            ? JSON.parse(validMarket.clobTokenIds) 
+            : validMarket.clobTokenIds;
+
+        let yesTokenId = parsedTokens[0];
+        let noTokenId = parsedTokens[1];
 
         if (yesTokenId && noTokenId) {
             currentYesToken = yesTokenId;
@@ -245,9 +249,10 @@ async function loadNextMarket() {
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
-            currentPrices = { YES: 0, NO: 0 }; // Reset radar on new market
+            currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`[MARKET LOADED] Subscribing to: ${validEvent.title}`);
+            console.log(`[DEBUG] YES Token: ${yesTokenId.substring(0, 8)}... | NO Token: ${noTokenId.substring(0, 8)}...`);
             
             if (global.wsMarket && global.wsMarket.readyState === WebSocket.OPEN) {
                 global.wsMarket.send(JSON.stringify({ type: "market", assets_ids: [currentYesToken, currentNoToken] }));
