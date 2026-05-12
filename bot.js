@@ -15,7 +15,8 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.10; // Left at 0.10 so it fires immediately for testing!
+const ENTRY_VOLATILITY_THRESHOLD = 0.80; // Restored to 0.80 for real trading
+const MAX_ALLOWED_SPREAD = 0.05; // THE FIX: Refuse to buy if the spread is wider than 5 cents
 const MIN_TP_CENTS = 0.03; 
 const MAX_TP_CENTS = 0.12; 
 const MIN_SL_CENTS = 0.03; 
@@ -103,7 +104,7 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
         if (parseFloat(sizeNeeded) < parseFloat(shares)) {
-            console.log(`[DEPTH WARNING] Insufficient liquidity for ${actionLog}. Required: ${shares}, Available: ${sizeNeeded}`);
+            console.log(`[DEPTH WARNING] Insufficient liquidity for ${actionLog}.`);
             return false;
         }
 
@@ -130,16 +131,15 @@ function handleMarketUpdate(data) {
     const bestBid = data.bestBid;
     const bestBidSize = data.bestBidSize;
     
-    // Ignore updates with broken/empty data
     if (isNaN(bestAsk) || isNaN(bestBid)) return;
 
     const currentMid = (bestAsk + bestBid) / 2;
+    const spread = bestAsk - bestBid; // Calculate the gap
     
     const tokenId = data.asset_id;
     const side = tokenId === currentYesToken ? 'YES' : (tokenId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
-    // Update the radar price
     currentPrices[side] = bestAsk;
 
     if (lastMidpoint[side] !== 0) {
@@ -152,13 +152,16 @@ function handleMarketUpdate(data) {
 
     // --- 1. DYNAMIC ENTRY LOGIC ---
     if (!trade.active && !isExecuting && secondsLeft > 10) {
+        // THE FIX: Do not enter if the book is hollow!
+        if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
+
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
         const isTrendingCorrectly = trend[side] > 0;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly) {
-            console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)}`);
+            console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}`);
             executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
                 if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled };
             });
@@ -172,8 +175,8 @@ function handleMarketUpdate(data) {
         if (secondsLeft <= 5) {
             console.log(`\n[⚠️ EXPIRATION BAILOUT] Market ending. Dumping bag to avoid resolution!`);
             const bailoutPrice = Math.max(0.01, bestBid - 0.02);
-            executeFOK(tokenId, bailoutPrice, 'SELL', bestBidSize, 'BAILOUT').then(res => {
-                if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bailoutPrice);
+            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'BAILOUT').then(res => {
+                if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bestBid);
             });
             return;
         }
@@ -195,10 +198,10 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        if (bestBid <= stopLossPrice) {
-            const slipPrice = Math.max(0.01, bestBid - 0.01); 
-            executeFOK(tokenId, slipPrice, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
-                if (res.success) logCompletedTrade("STOP LOSS", slipPrice);
+        // THE FIX: bestBid must be > 0 to trigger a stop loss (ignore air pockets)
+        if (bestBid > 0 && bestBid <= stopLossPrice) {
+            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
+                if (res.success) logCompletedTrade("STOP LOSS", bestBid); // Exit price is now realistic
             });
             return;
         }
@@ -286,7 +289,6 @@ async function runLiveTrader() {
     wsMarket.on('open', () => {
         console.log("[WS] Market Stream Connected.");
         
-        // --- THE FIX: KEEP THE CONNECTION ALIVE ---
         setInterval(() => {
             if (wsMarket.readyState === WebSocket.OPEN) wsMarket.send("PING");
         }, 10000);
@@ -297,7 +299,6 @@ async function runLiveTrader() {
         }
     });
 
-    // --- THE FIX: HANDLE EVENT_TYPE AND MAP SCHEMA DIFFERENCES ---
     wsMarket.on('message', (msg) => {
         const textMsg = msg.toString();
         if (textMsg === "PONG") return; 
@@ -319,7 +320,7 @@ async function runLiveTrader() {
                     handleMarketUpdate({
                         asset_id: pc.asset_id,
                         bestAsk: parseFloat(pc.best_ask),
-                        bestAskSize: 9999, // Simulated infinite liquidity for paper test
+                        bestAskSize: 9999, 
                         bestBid: parseFloat(pc.best_bid),
                         bestBidSize: 9999
                     });
