@@ -4,7 +4,7 @@ const { createWalletClient, http } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
 const { polygon } = require('viem/chains');
 const WebSocket = require('ws'); 
-const fs = require('fs'); // Added for local logging
+const fs = require('fs'); 
 
 // --- SECURITY & AUTH ---
 let rawKey = process.env.PRIVATE_KEY;
@@ -15,7 +15,8 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.80; // Tightened from 0.70 to require $0.40 - $0.60 range
+// Dropped to 0.10 for testing. This allows entries from $0.05 to $0.95.
+const ENTRY_VOLATILITY_THRESHOLD = 0.10; 
 const MIN_TP_CENTS = 0.03; 
 const MAX_TP_CENTS = 0.12; 
 const MIN_SL_CENTS = 0.03; 
@@ -35,9 +36,10 @@ let stats = {
     currentBalance: 100.00
 };
 
-// Independent momentum trackers for YES and NO
+// Independent momentum & price trackers
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
+let currentPrices = { YES: 0, NO: 0 }; // Added for the radar
 
 let isExecuting = false;
 let isSearchingNextMarket = false;
@@ -112,7 +114,7 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
 
         console.log(`\n[PAPER SIMULATION] ${actionLog} ${side} @ $${price.toFixed(3)}...`);
         
-        // SIMULATED EXECUTION: Assuming a 1ms ping, if liquidity is verified above, we assume a clean fill.
+        // SIMULATED EXECUTION
         console.log(`[PAPER SUCCESS] ${actionLog} filled instantly.`);
         return { success: true, sharesFilled: shares };
 
@@ -128,7 +130,7 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
 // DYNAMIC NEAR-STRIKE LOGIC
 // ─────────────────────────────────────────────────────────
 function handleMarketUpdate(data) {
-    if (!data || !data.asks || !data.bids) return;
+    if (!data || !data.asks || !data.bids || data.asks.length === 0 || data.bids.length === 0) return;
 
     const bestAsk = parseFloat(data.asks[0].price);
     const bestAskSize = data.asks[0].size;
@@ -138,6 +140,9 @@ function handleMarketUpdate(data) {
     
     const tokenId = data.asset_id;
     const side = data.asset_id === currentYesToken ? 'YES' : 'NO';
+
+    // Update the radar price
+    currentPrices[side] = bestAsk;
 
     if (lastMidpoint[side] !== 0) {
         trend[side] = currentMid - lastMidpoint[side];
@@ -213,13 +218,11 @@ async function loadNextMarket() {
     console.log('\n[SCANNER] Calculating the next active 5-Min BTC Market...');
     
     try {
-        // 1. Calculate the current 5-minute interval's ending Unix timestamp
         const nowSec = Math.floor(Date.now() / 1000);
         const remainder = nowSec % 300;
         const nextIntervalSec = nowSec + (300 - remainder);
         const eventSlug = `btc-updown-5m-${nextIntervalSec}`;
 
-        // 2. Query the Gamma API directly for this specific calculated market
         const response = await fetch(`https://gamma-api.polymarket.com/events?slug=${eventSlug}`);
         const events = await response.json();
 
@@ -232,7 +235,6 @@ async function loadNextMarket() {
         const validEvent = events[0];
         const validMarket = validEvent.markets[0]; 
 
-        // 3. Extract the Token IDs (Index 0 is Yes, Index 1 is No)
         let yesTokenId = validMarket.clobTokenIds[0];
         let noTokenId = validMarket.clobTokenIds[1];
 
@@ -241,9 +243,9 @@ async function loadNextMarket() {
             currentNoToken  = noTokenId;
             marketEndTime   = nextIntervalSec * 1000; 
             
-            // Reset state trackers
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
+            currentPrices = { YES: 0, NO: 0 }; // Reset radar on new market
 
             console.log(`[MARKET LOADED] Subscribing to: ${validEvent.title}`);
             
@@ -298,7 +300,7 @@ async function runLiveTrader() {
 
         if (Math.floor(now / 1000) % 10 === 0) {
             const status = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING STRIKE VOLATILITY';
-            console.log(`[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)}`);
+            console.log(`[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}`);
         }
     }, 1000);
 }
