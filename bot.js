@@ -208,19 +208,24 @@ function handleMarketUpdate(data) {
         }
     }
 }
+
 // ─────────────────────────────────────────────────────────
 // MARKET ROLLOVER ENGINE
 // ─────────────────────────────────────────────────────────
 async function loadNextMarket() {
     if (isSearchingNextMarket) return;
     isSearchingNextMarket = true;
-    console.log('\n[SCANNER] Calculating the next active 5-Min BTC Market...');
+    console.log('\n[SCANNER] Calculating the CURRENT active 5-Min BTC Market...');
     
     try {
         const nowSec = Math.floor(Date.now() / 1000);
         const remainder = nowSec % 300;
-        const nextIntervalSec = nowSec + (300 - remainder);
-        const eventSlug = `btc-updown-5m-${nextIntervalSec}`;
+        
+        // Round down to the start of the current 5-minute window
+        const currentIntervalStartSec = nowSec - remainder;
+        const currentIntervalEndSec = currentIntervalStartSec + 300;
+        
+        const eventSlug = `btc-updown-5m-${currentIntervalStartSec}`;
 
         const response = await fetch(`https://gamma-api.polymarket.com/events?slug=${eventSlug}`);
         const events = await response.json();
@@ -234,7 +239,6 @@ async function loadNextMarket() {
         const validEvent = events[0];
         const validMarket = validEvent.markets[0]; 
 
-        // THE FIX: Parse the JSON string into an array before extracting the IDs
         let parsedTokens = typeof validMarket.clobTokenIds === 'string' 
             ? JSON.parse(validMarket.clobTokenIds) 
             : validMarket.clobTokenIds;
@@ -245,7 +249,7 @@ async function loadNextMarket() {
         if (yesTokenId && noTokenId) {
             currentYesToken = yesTokenId;
             currentNoToken  = noTokenId;
-            marketEndTime   = nextIntervalSec * 1000; 
+            marketEndTime   = currentIntervalEndSec * 1000; 
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
@@ -272,9 +276,6 @@ async function loadNextMarket() {
 // ─────────────────────────────────────────────────────────
 // BOOT SEQUENCE & TIMERS
 // ─────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────
-// BOOT SEQUENCE & TIMERS
-// ─────────────────────────────────────────────────────────
 async function runLiveTrader() {
     console.log("Booting Pure Dynamic Near-Strike Engine in PAPER TRADING MODE...");
     
@@ -289,7 +290,7 @@ async function runLiveTrader() {
     const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
     global.wsMarket = wsMarket; 
     
-    // THE FIX: Added logic to subscribe right when the connection opens if tokens are ready
+    // Added logic to subscribe right when the connection opens if tokens are ready
     wsMarket.on('open', () => {
         console.log("[WS] Market Stream Connected.");
         if (currentYesToken && currentNoToken) {
