@@ -205,7 +205,7 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        const minReasonableBid = stopLossPrice - 0.10; 
+        const minReasonableBid = stopLossPrice - 0.03; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
             isExiting = true;
