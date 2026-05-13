@@ -15,7 +15,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED + WIDE STOP) ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.85; // Relaxed slightly to catch momentum earlier
+const ENTRY_VOLATILITY_THRESHOLD = 0.90; // Relaxed slightly to catch momentum earlier
 const MAX_ALLOWED_SPREAD = 0.02; // Tightened to prevent massive slippage on entry
 const MIN_TP_CENTS = 0.02; // Realistic 5-min base profit
 const MAX_TP_CENTS = 0.05; // Force early profit taking, do not wait for home runs
