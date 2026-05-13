@@ -14,13 +14,13 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
 
-// --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED) ---
+// --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED + WIDE STOP) ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.85; // Relaxed slightly to catch momentum earlier
 const MAX_ALLOWED_SPREAD = 0.02; // Tightened to prevent massive slippage on entry
 const MIN_TP_CENTS = 0.02; // Realistic 5-min base profit
 const MAX_TP_CENTS = 0.05; // Force early profit taking, do not wait for home runs
 const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.06; // Cut bleeding fast if the spike exhausts
+const MAX_SL_CENTS = 0.20; // Reverted to wider dynamic stop loss to avoid whipsaws
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
@@ -148,6 +148,12 @@ function handleMarketUpdate(data) {
 
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
+
+    // --- NEW: 30-Second Opening Delay ---
+    // A 5-minute market is 300 seconds total. Ignore the first 30 seconds of chaotic open.
+    if (secondsLeft > 270) {
+        return; 
+    }
 
     if (!trade.active && !isExecuting && !isExiting && secondsLeft > 10) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
