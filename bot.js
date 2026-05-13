@@ -14,13 +14,13 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
 
-// --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED + WIDE STOP) ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.90; // Relaxed slightly to catch momentum earlier
+// --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED + GOLDILOCKS STOP) ---
+const ENTRY_VOLATILITY_THRESHOLD = 0.90; // Only allows volatility entries close to center
 const MAX_ALLOWED_SPREAD = 0.02; // Tightened to prevent massive slippage on entry
 const MIN_TP_CENTS = 0.02; // Realistic 5-min base profit
 const MAX_TP_CENTS = 0.05; // Force early profit taking, do not wait for home runs
 const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.20; // Reverted to wider dynamic stop loss to avoid whipsaws
+const MAX_SL_CENTS = 0.12; // NEW: The 'Goldilocks' dynamic stop loss to cut toxic bleeding
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
@@ -149,7 +149,6 @@ function handleMarketUpdate(data) {
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    // --- NEW: 30-Second Opening Delay ---
     // A 5-minute market is 300 seconds total. Ignore the first 30 seconds of chaotic open.
     if (secondsLeft > 270) {
         return; 
@@ -163,8 +162,9 @@ function handleMarketUpdate(data) {
 
         const isTrendingCorrectly = trend[side] > 0;
 
-        if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly) {
-            console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}`);
+        // NEW: bestAsk <= 0.50 completely blocks buying the tops of exhausted momentum spikes
+        if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
+            console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}`);
             executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
                 if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled };
             });
