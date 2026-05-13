@@ -12,6 +12,7 @@ const colors = {
     green: "\x1b[32m",
     red: "\x1b[31m",
     yellow: "\x1b[33m",
+    brightYellow: "\x1b[93m", // Striking Gold/Yellow for Parrot OS visibility
     cyan: "\x1b[36m",
     magenta: "\x1b[35m",
     gray: "\x1b[90m"
@@ -98,7 +99,8 @@ function logCompletedTrade(exitReason, exitPrice) {
     const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
     const roi = (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100).toFixed(2);
 
-    const c = netPnL > 0 ? colors.green : colors.red;
+    // Swap green for bright yellow so it pops on Parrot OS
+    const c = netPnL > 0 ? colors.brightYellow : colors.red;
 
     console.log(`\n${colors.gray}========================================${colors.reset}`);
     console.log(`[TRADE CLOSED] Reason: ${c}${exitReason}${colors.reset}`);
@@ -111,7 +113,7 @@ function logCompletedTrade(exitReason, exitPrice) {
     console.log(`${colors.gray}========================================\n${colors.reset}`);
 
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
-    tradeStream.write(logEntry); // Async write, no lag
+    tradeStream.write(logEntry); 
 
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
@@ -129,7 +131,8 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
             return false;
         }
 
-        const logColor = side === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.green : colors.red);
+        // Swap green for bright yellow
+        const logColor = side === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
         console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${side} @ $${price.toFixed(3)}...${colors.reset}`);
         console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
         return { success: true, sharesFilled: shares };
@@ -205,7 +208,11 @@ function handleMarketUpdate(data) {
 
         const timeInTradeSec = (Date.now() - trade.entryTime) / 1000;
         if (timeInTradeSec > 20) {
-            if (bestBid <= trade.entryPrice) {
+            // SLIPPAGE BRAKE: Only accept a Time Stop if the bid is reasonable (max 5-cent loss).
+            // If it flashes to $0.01, ignore it and let the standard Stop Loss handle it when liquidity returns.
+            const minTimeStopBid = trade.entryPrice - 0.05; 
+
+            if (bestBid <= trade.entryPrice && bestBid >= minTimeStopBid) {
                 console.log(`\n${colors.red}[STAGNATION BAILOUT] Momentum died. 20s elapsed. Exiting early to prevent Stop Loss.${colors.reset}`);
                 isExiting = true;
                 executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TIME STOP').then(res => {
@@ -334,7 +341,7 @@ async function loadNextMarket() {
             trend = { YES: 0, NO: 0 };
             currentPrices = { YES: 0, NO: 0 }; 
 
-            console.log(`${colors.green}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
+            console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
             connectWebsocket();
 
         } else {
