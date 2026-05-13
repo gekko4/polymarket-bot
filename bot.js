@@ -55,7 +55,8 @@ let currentPrices = { YES: 0, NO: 0 };
 let isExecuting = false;
 let isExiting = false; 
 let isSearchingNextMarket = false;
-let searchCooldownTimer = 0; 
+let searchCooldownTimer = 0;
+let glitchLockoutTimer = 0; 
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -158,11 +159,23 @@ function handleMarketUpdate(data) {
     const currentMid = (bestAsk + bestBid) / 2;
     const spread = bestAsk - bestBid; 
     
-    const tokenId = data.asset_id;
     const side = tokenId === currentYesToken ? 'YES' : (tokenId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
     currentPrices[side] = bestAsk;
+
+    // --- NEW: THE GLITCH LOCKOUT ---
+    // If the API flashes the empty 0.990 order book, lock trading for 3 seconds.
+    if (bestAsk >= 0.98) {
+        glitchLockoutTimer = Date.now() + 3000;
+        return;
+    }
+    
+    // If we are currently locked out, ignore all data to let the trend variables reset cleanly.
+    if (Date.now() < glitchLockoutTimer) {
+        return;
+    }
+    // --------------------------------
 
     if (lastMidpoint[side] !== 0) {
         trend[side] = currentMid - lastMidpoint[side];
