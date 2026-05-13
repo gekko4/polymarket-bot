@@ -14,13 +14,13 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
 
-// --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.90; // TIGHTENED FROM 0.80 TO 0.90
-const MAX_ALLOWED_SPREAD = 0.05; 
-const MIN_TP_CENTS = 0.03; 
-const MAX_TP_CENTS = 0.12; 
+// --- STRIKE PROXIMITY CONFIG (SCALP OPTIMIZED) ---
+const ENTRY_VOLATILITY_THRESHOLD = 0.85; // Relaxed slightly to catch momentum earlier
+const MAX_ALLOWED_SPREAD = 0.02; // Tightened to prevent massive slippage on entry
+const MIN_TP_CENTS = 0.02; // Realistic 5-min base profit
+const MAX_TP_CENTS = 0.05; // Force early profit taking, do not wait for home runs
 const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.20; 
+const MAX_SL_CENTS = 0.06; // Cut bleeding fast if the spike exhausts
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
@@ -61,7 +61,14 @@ function logCompletedTrade(exitReason, exitPrice) {
     
     const grossReturn = exitPrice * trade.shares;
     const entryCost = trade.entryPrice * trade.shares;
-    const totalFees = (entryCost * (TAKER_FEE_BPS / 10000)) + (grossReturn * (TAKER_FEE_BPS / 10000));
+    
+    // Simulating Maker vs Taker fees:
+    // Entry is always Taker. Exit is Maker (0 fee) if Take Profit, otherwise Taker (SL/Bailout).
+    let totalFees = entryCost * (TAKER_FEE_BPS / 10000); 
+    if (exitReason !== "TAKE PROFIT") {
+        totalFees += (grossReturn * (TAKER_FEE_BPS / 10000));
+    }
+
     const netPnL = (grossReturn - entryCost) - totalFees;
 
     stats.totalTrades++;
@@ -178,8 +185,9 @@ function handleMarketUpdate(data) {
         const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
         const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
 
-        const feeCost = trade.entryPrice * (TAKER_FEE_BPS / 10000) * 2;
-        const targetProfitPrice = trade.entryPrice + dynamicTP_Gap + feeCost;
+        // Limit order logic: We only need to clear the Taker entry fee to be profitable on a Maker exit.
+        const entryFeeCost = trade.entryPrice * (TAKER_FEE_BPS / 10000);
+        const targetProfitPrice = trade.entryPrice + dynamicTP_Gap + entryFeeCost;
         const stopLossPrice = trade.entryPrice - dynamicSL_Gap;
 
         if (bestBid >= targetProfitPrice) {
