@@ -154,7 +154,7 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 10) {
+    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
