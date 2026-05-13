@@ -20,13 +20,13 @@ const MAX_ALLOWED_SPREAD = 0.02; // Tightened to prevent massive slippage on ent
 const MIN_TP_CENTS = 0.02; // Realistic 5-min base profit
 const MAX_TP_CENTS = 0.05; // Force early profit taking, do not wait for home runs
 const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.12; // NEW: The 'Goldilocks' dynamic stop loss to cut toxic bleeding
+const MAX_SL_CENTS = 0.12; // The 'Goldilocks' dynamic stop loss to cut toxic bleeding
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
 
 // --- PAPER TRADING STATE & STATS ---
-let trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0 };
+let trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
 
 let stats = {
     totalTrades: 0,
@@ -94,7 +94,7 @@ function logCompletedTrade(exitReason, exitPrice) {
     fs.appendFileSync(logFile, logEntry);
 
     // Reset Trade State
-    trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0 };
+    trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
 }
 
@@ -154,19 +154,23 @@ function handleMarketUpdate(data) {
         return; 
     }
 
+    // --- FAT MIDDLE RULE ---
+    // Stop taking NEW trades if there is less than 60 seconds left until expiration
     if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        const isTrendingCorrectly = trend[side] > 0;
+        // --- ORGANIC MOMENTUM FILTER ---
+        // Trend must be positive, but cannot be a massive 5+ cent instant gap (fake out)
+        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
 
-        // NEW: bestAsk <= 0.50 completely blocks buying the tops of exhausted momentum spikes
+        // bestAsk <= 0.50 completely blocks buying the tops of exhausted momentum spikes
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}`);
             executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
-                if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled };
+                if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now() };
             });
         }
         return; 
@@ -183,6 +187,21 @@ function handleMarketUpdate(data) {
                 else isExiting = false; 
             });
             return;
+        }
+
+        // --- STAGNATION TIME STOP ---
+        // Tightened to 20 seconds. If a volatile spike stalls this long, momentum is dead.
+        const timeInTradeSec = (Date.now() - trade.entryTime) / 1000;
+        if (timeInTradeSec > 20) {
+            if (bestBid <= trade.entryPrice) {
+                console.log(`\n[⏰ STAGNATION BAILOUT] Momentum died. 20s elapsed. Exiting early to prevent Stop Loss.`);
+                isExiting = true;
+                executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TIME STOP').then(res => {
+                    if (res.success) logCompletedTrade("TIME STOP", bestBid);
+                    else isExiting = false;
+                });
+                return;
+            }
         }
 
         const distanceToCenterBid = Math.abs(0.50 - bestBid);
@@ -205,6 +224,8 @@ function handleMarketUpdate(data) {
             return;
         }
 
+        // --- THE SLIPPAGE BRAKE ---
+        // Only accept a fill within 3 cents of the Stop Loss. Do not sell into a flash crash.
         const minReasonableBid = stopLossPrice - 0.03; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
