@@ -27,7 +27,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
 const MAX_ALLOWED_SPREAD = 0.02; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
