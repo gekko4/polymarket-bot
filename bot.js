@@ -232,20 +232,7 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        const timeInTradeSec = (Date.now() - trade.entryTime) / 1000;
-        if (timeInTradeSec > 20) {
-            const minTimeStopBid = trade.entryPrice - 0.05; 
-
-            if (bestBid <= trade.entryPrice && bestBid >= minTimeStopBid) {
-                console.log(`\n${colors.red}[STAGNATION BAILOUT] Momentum died. 20s elapsed. Exiting early to prevent Stop Loss.${colors.reset}`);
-                isExiting = true;
-                executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TIME STOP').then(res => {
-                    if (res.success) logCompletedTrade("TIME STOP", bestBid);
-                    else isExiting = false;
-                });
-                return;
-            }
-        }
+        // --- TIME STOP REMOVED COMPLETELY ---
 
         const distanceToCenterBid = Math.abs(0.50 - bestBid);
         const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
@@ -363,7 +350,6 @@ async function loadNextMarket() {
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
-            // previousTrend removed here
             currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
