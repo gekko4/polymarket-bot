@@ -28,7 +28,7 @@ const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
-const MAX_ALLOWED_SPREAD = 0.05; // UPDATED: Widened to 5 cents for thin/London hours
+const MAX_ALLOWED_SPREAD = 0.05; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
 const MIN_SL_CENTS = 0.03; 
@@ -49,13 +49,13 @@ let stats = {
 
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
-let currentPrices = { YES: {ask: 0, bid: 0}, NO: {ask: 0, bid: 0} }; // UPDATED: Now tracks both to show you Spread in logs
+let currentPrices = { YES: {ask: 0, bid: 0}, NO: {ask: 0, bid: 0} }; 
 
 let isExecuting = false;
 let isExiting = false; 
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0;
-let glitchLockoutTimer = 0; // Protection against 0.990 glitch
+let glitchLockoutTimer = 0; 
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -63,7 +63,7 @@ let marketEndTime = 0;
 
 let clobClient;
 
-// --- ASYNC LOGGING STREAMS (ZERO LAG) ---
+// --- ASYNC LOGGING STREAMS ---
 const tradeLogFile = 'paper_trades_log.csv';
 const priceLogFile = 'price_history.csv';
 
@@ -155,17 +155,20 @@ function handleMarketUpdate(data) {
     const side = currentAssetId === currentYesToken ? 'YES' : (currentAssetId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
-    // Save for terminal logging
     currentPrices[side] = { ask: bestAsk, bid: bestBid };
 
     // --- GLITCH LOCKOUT ---
     if (bestAsk >= 0.98) {
         glitchLockoutTimer = Date.now() + 3000;
-        lastMidpoint[side] = 0; // UPDATED: Wipes memory to prevent fake momentum gaps
-        trend[side] = 0;        // UPDATED: Resets trend math
+        lastMidpoint[side] = 0; // FIX 1: Wipes memory to prevent fake momentum gaps
+        trend[side] = 0;        // FIX 1: Resets trend math
         return;
     }
     if (Date.now() < glitchLockoutTimer) return;
+
+    // --- TREND CALCULATION ---
+    // FIX 2: Ignore volume-only updates so we don't zero out the trend!
+    if (lastMidpoint[side] !== 0 && currentMid === lastMidpoint[side]) return;
 
     if (lastMidpoint[side] !== 0) {
         trend[side] = currentMid - lastMidpoint[side];
@@ -185,7 +188,6 @@ function handleMarketUpdate(data) {
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
         // Organic Momentum Filter
-        // UPDATED: Speed limit increased to 0.09 to allow for thin market "teleports"
         const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.09;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
@@ -356,7 +358,6 @@ async function runLiveTrader() {
         }
 
         if (currentPrices.YES.ask > 0 && currentPrices.NO.ask > 0) {
-            // Unchanged: Maintains standard formatting for your data charts
             priceStream.write(`${new Date().toISOString()},${currentPrices.YES.ask.toFixed(3)},${currentPrices.NO.ask.toFixed(3)}\n`);
         }
 
@@ -364,7 +365,6 @@ async function runLiveTrader() {
             const statusColor = trade.active ? colors.cyan : colors.gray;
             const statusText = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING VOLATILITY';
             
-            // UPDATED: Terminal now calculates and prints the active spread
             const yesSpread = currentPrices.YES.bid > 0 ? (currentPrices.YES.ask - currentPrices.YES.bid).toFixed(2) : "N/A";
             const noSpread = currentPrices.NO.bid > 0 ? (currentPrices.NO.ask - currentPrices.NO.bid).toFixed(2) : "N/A";
 
