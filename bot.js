@@ -27,8 +27,8 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
-const MAX_ALLOWED_SPREAD = 0.05; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.90; // Kept at 0.90 as requested
+const MAX_ALLOWED_SPREAD = 0.10; // Raised to 0.10 to allow thinner markets
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
 const MIN_SL_CENTS = 0.03; 
@@ -147,10 +147,10 @@ function handleMarketUpdate(data) {
     const bestBidSize = data.bestBidSize;
     const currentAssetId = data.asset_id;
     
-    if (isNaN(bestAsk) || isNaN(bestBid)) return;
+    if (isNaN(bestAsk)) return; // Failsafe only if ASK is missing, bid is allowed to be 0
 
-    const currentMid = (bestAsk + bestBid) / 2;
-    const spread = bestAsk - bestBid; 
+    const currentMid = bestBid > 0 ? (bestAsk + bestBid) / 2 : bestAsk;
+    const spread = bestBid > 0 ? (bestAsk - bestBid) : "N/A"; // Handle empty bids safely
     
     const side = currentAssetId === currentYesToken ? 'YES' : (currentAssetId === currentNoToken ? 'NO' : null);
     if (!side) return; 
@@ -160,14 +160,13 @@ function handleMarketUpdate(data) {
     // --- GLITCH LOCKOUT ---
     if (bestAsk >= 0.98) {
         glitchLockoutTimer = Date.now() + 3000;
-        lastMidpoint[side] = 0; // FIX 1: Wipes memory to prevent fake momentum gaps
-        trend[side] = 0;        // FIX 1: Resets trend math
+        lastMidpoint[side] = 0; 
+        trend[side] = 0;        
         return;
     }
     if (Date.now() < glitchLockoutTimer) return;
 
     // --- TREND CALCULATION ---
-    // FIX 2: Ignore volume-only updates so we don't zero out the trend!
     if (lastMidpoint[side] !== 0 && currentMid === lastMidpoint[side]) return;
 
     if (lastMidpoint[side] !== 0) {
@@ -182,7 +181,8 @@ function handleMarketUpdate(data) {
 
     // --- ENTRY LOGIC ---
     if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60) {
-        if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
+        // If there's a valid spread and it's too wide, abort. If "N/A", bypass to momentum check.
+        if (spread !== "N/A" && spread > MAX_ALLOWED_SPREAD) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
@@ -191,7 +191,8 @@ function handleMarketUpdate(data) {
         const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.09;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
-            console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
+            const spreadLog = spread === "N/A" ? "N/A" : `$${spread.toFixed(2)}`;
+            console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: ${spreadLog}${colors.reset}`);
             executeFOK(currentAssetId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
                 if (res.success) trade = { active: true, side: side, tokenId: currentAssetId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now() };
             });
@@ -201,6 +202,8 @@ function handleMarketUpdate(data) {
 
     // --- EXIT LOGIC ---
     if (trade.active && trade.tokenId === currentAssetId && !isExecuting && !isExiting) {
+        
+        if (bestBid === 0) return; // Cannot safely or realistically exit if the orderbook has zero buyers
         
         // Expiration Bailout
         if (secondsLeft <= 5) {
@@ -279,13 +282,14 @@ function connectWebsocket() {
         if (textMsg === "PONG") return; 
         try {
             const data = JSON.parse(textMsg);
-            if (data.event_type === 'book' && data.asks.length > 0 && data.bids.length > 0) {
+            if (data.event_type === 'book' && data.asks && data.asks.length > 0) {
+                // Modified to handle cases where bids array vanishes entirely
                 handleMarketUpdate({
                     asset_id: data.asset_id,
                     bestAsk: parseFloat(data.asks[0].price),
                     bestAskSize: parseFloat(data.asks[0].size),
-                    bestBid: parseFloat(data.bids[0].price),
-                    bestBidSize: parseFloat(data.bids[0].size)
+                    bestBid: data.bids && data.bids.length > 0 ? parseFloat(data.bids[0].price) : 0,
+                    bestBidSize: data.bids && data.bids.length > 0 ? parseFloat(data.bids[0].size) : 0
                 });
             } else if (data.event_type === 'price_change' && data.price_changes) {
                 for (const pc of data.price_changes) {
@@ -293,7 +297,7 @@ function connectWebsocket() {
                         asset_id: pc.asset_id,
                         bestAsk: parseFloat(pc.best_ask),
                         bestAskSize: 9999, 
-                        bestBid: parseFloat(pc.best_bid),
+                        bestBid: pc.best_bid !== undefined && pc.best_bid !== null ? parseFloat(pc.best_bid) : 0,
                         bestBidSize: 9999
                     });
                 }
