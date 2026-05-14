@@ -58,7 +58,7 @@ let isExecuting = false;
 let isExiting = false; 
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
-let postTradeCooldown = 0; // FIX: The 5-second breather timer
+let postTradeCooldown = 0; // Timer to prevent immediate re-entry after losses
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -81,7 +81,9 @@ const originalLog = console.log;
 console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+    // Strip ANSI colors so the text file remains clean and readable
     const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
+    // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
 
@@ -129,6 +131,7 @@ function logCompletedTrade(exitReason, exitPrice) {
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     tradeStream.write(logEntry); 
 
+    // Feed the mobile dashboard
     recentTrades.unshift({ 
         time: new Date().toLocaleTimeString(), 
         reason: exitReason, 
@@ -141,8 +144,12 @@ function logCompletedTrade(exitReason, exitPrice) {
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
     
-    // FIX: Force the bot to wait 5 seconds before taking another trade
-    postTradeCooldown = Date.now() + 5000; 
+    // FIX: Only apply the 5-second breather if the trade was a Stop Loss
+    if (exitReason === "STOP LOSS") {
+        postTradeCooldown = Date.now() + 5000; 
+    } else {
+        postTradeCooldown = 0; // Instantly ready for the next setup if it was a win
+    }
 }
 
 async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
@@ -189,6 +196,7 @@ function handleMarketUpdate(data) {
 
     currentPrices[side] = bestAsk;
 
+    // --- SINGLE-TICK MEMORY ---
     if (lastMidpoint[side] !== 0) {
         trend[side] = currentMid - lastMidpoint[side];
     }
@@ -201,13 +209,14 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    // FIX: Added Date.now() > postTradeCooldown so it ignores ticks during the 5-second breather
+    // Checking the postTradeCooldown lock (only affects STOP LOSS events)
     if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60 && Date.now() > postTradeCooldown) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
+        // --- SINGLE-TICK AGGRESSIVE ENTRY ---
         const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
