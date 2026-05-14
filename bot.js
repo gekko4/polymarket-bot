@@ -27,7 +27,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
 const MAX_ALLOWED_SPREAD = 0.02; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
@@ -50,6 +50,7 @@ let stats = {
 
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
+let previousTrend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
 
 let isExecuting = false;
@@ -69,6 +70,20 @@ const priceLogFile = 'price_history.csv';
 
 const tradeStream = fs.createWriteStream(tradeLogFile, { flags: 'a' });
 const priceStream = fs.createWriteStream(priceLogFile, { flags: 'a' });
+
+// --- ZERO-LAG TERMINAL LOGGING ---
+const terminalLogFile = 'terminal_logs.txt';
+const terminalStream = fs.createWriteStream(terminalLogFile, { flags: 'a' });
+
+const originalLog = console.log;
+console.log = function (...args) {
+    originalLog.apply(console, args);
+    const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+    // Strip ANSI colors so the text file remains clean and readable
+    const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
+    // Write asynchronously (Non-Blocking)
+    terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
+};
 
 if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
     tradeStream.write("Date,Market,Action,Entry_Price,Exit_Price,Shares,PnL_USD,Balance_USD,Win_Rate_Pct\n");
@@ -165,6 +180,7 @@ function handleMarketUpdate(data) {
     currentPrices[side] = bestAsk;
 
     if (lastMidpoint[side] !== 0) {
+        previousTrend[side] = trend[side];
         trend[side] = currentMid - lastMidpoint[side];
     }
     lastMidpoint[side] = currentMid;
@@ -182,7 +198,7 @@ function handleMarketUpdate(data) {
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
+        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05 && previousTrend[side] > 0;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
@@ -339,6 +355,7 @@ async function loadNextMarket() {
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
+            previousTrend = { YES: 0, NO: 0 };
             currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
