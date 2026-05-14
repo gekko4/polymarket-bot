@@ -28,7 +28,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.95; // Kept at 0.95 to filter out extreme noise
+const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
 const MAX_ALLOWED_SPREAD = 0.02; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
@@ -58,6 +58,7 @@ let isExecuting = false;
 let isExiting = false; 
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
+let postTradeCooldown = 0; // FIX: The 5-second breather timer
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -80,9 +81,7 @@ const originalLog = console.log;
 console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
-    // Strip ANSI colors so the text file remains clean and readable
     const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
-    // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
 
@@ -130,7 +129,6 @@ function logCompletedTrade(exitReason, exitPrice) {
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     tradeStream.write(logEntry); 
 
-    // Feed the mobile dashboard
     recentTrades.unshift({ 
         time: new Date().toLocaleTimeString(), 
         reason: exitReason, 
@@ -142,6 +140,9 @@ function logCompletedTrade(exitReason, exitPrice) {
 
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
+    
+    // FIX: Force the bot to wait 5 seconds before taking another trade
+    postTradeCooldown = Date.now() + 5000; 
 }
 
 async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
@@ -188,7 +189,6 @@ function handleMarketUpdate(data) {
 
     currentPrices[side] = bestAsk;
 
-    // --- REVERTED BACK TO SINGLE-TICK MEMORY ---
     if (lastMidpoint[side] !== 0) {
         trend[side] = currentMid - lastMidpoint[side];
     }
@@ -201,13 +201,13 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60) {
+    // FIX: Added Date.now() > postTradeCooldown so it ignores ticks during the 5-second breather
+    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60 && Date.now() > postTradeCooldown) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        // --- REVERTED BACK TO SINGLE-TICK AGGRESSIVE ENTRY ---
         const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
@@ -231,8 +231,6 @@ function handleMarketUpdate(data) {
             });
             return;
         }
-
-        // --- TIME STOP REMOVED COMPLETELY ---
 
         const distanceToCenterBid = Math.abs(0.50 - bestBid);
         const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
@@ -367,14 +365,12 @@ async function loadNextMarket() {
 
 // --- MOBILE WEB DASHBOARD (ZERO DEPENDENCIES) ---
 http.createServer((req, res) => {
-    // API Route for live data fetching
     if (req.url === '/api/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ stats, trade, currentPrices, recentTrades }));
         return;
     }
 
-    // Main UI Route
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`
     <!DOCTYPE html>
@@ -429,18 +425,15 @@ http.createServer((req, res) => {
                     const res = await fetch('/api/live');
                     const data = await res.json();
                     
-                    // Update Balance
                     document.getElementById('balance').innerText = '$' + data.stats.currentBalance.toFixed(2);
                     const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
                     const roiEl = document.getElementById('roi');
                     roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%';
                     roiEl.className = 'badge ' + (roi >= 0 ? 'bg-green' : 'bg-red');
                     
-                    // Update Win Rate
                     const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
                     document.getElementById('winrate').innerText = wr + '% (' + data.stats.wins + 'W / ' + data.stats.losses + 'L)';
 
-                    // Update Status
                     const statusEl = document.getElementById('status');
                     if (data.trade.active) {
                         statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ $' + data.trade.entryPrice.toFixed(3);
@@ -448,11 +441,9 @@ http.createServer((req, res) => {
                         statusEl.innerHTML = '<span class="gold">HUNTING VOLATILITY</span>';
                     }
 
-                    // Update Prices
                     document.getElementById('yes-price').innerText = '$' + data.currentPrices.YES.toFixed(3);
                     document.getElementById('no-price').innerText = '$' + data.currentPrices.NO.toFixed(3);
 
-                    // Update History
                     if (data.recentTrades.length > 0) {
                         let html = '';
                         data.recentTrades.forEach(t => {
@@ -467,7 +458,6 @@ http.createServer((req, res) => {
                     }
                 } catch (e) { console.error("Sync error"); }
             }
-            // Auto-refresh seamlessly every 1.5 seconds
             setInterval(updateDashboard, 1500);
             updateDashboard();
         </script>
@@ -491,7 +481,6 @@ async function runLiveTrader() {
 
     await loadNextMarket();
 
-    // The Interval Loop: Status updates and async price logging
     setInterval(async () => {
         if (marketEndTime === 0) {
             if (Date.now() > searchCooldownTimer) loadNextMarket();
@@ -501,12 +490,10 @@ async function runLiveTrader() {
         const now = Date.now();
         if (now >= marketEndTime && !isSearchingNextMarket) loadNextMarket();
 
-        // Log the exact YES and NO prices to the hard drive every 1 second
         if (currentPrices.YES > 0 && currentPrices.NO > 0) {
             priceStream.write(`${new Date().toISOString()},${currentPrices.YES.toFixed(3)},${currentPrices.NO.toFixed(3)}\n`);
         }
 
-        // Print to the terminal every 10 seconds
         if (Math.floor(now / 1000) % 10 === 0) {
             const statusColor = trade.active ? colors.cyan : colors.gray;
             const status = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING STRIKE VOLATILITY';
