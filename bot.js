@@ -28,7 +28,7 @@ const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
-const MAX_ALLOWED_SPREAD = 0.02; 
+const MAX_ALLOWED_SPREAD = 0.05; // UPDATED: Widened to 5 cents for thin/London hours
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
 const MIN_SL_CENTS = 0.03; 
@@ -49,7 +49,7 @@ let stats = {
 
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
-let currentPrices = { YES: 0, NO: 0 }; 
+let currentPrices = { YES: {ask: 0, bid: 0}, NO: {ask: 0, bid: 0} }; // UPDATED: Now tracks both to show you Spread in logs
 
 let isExecuting = false;
 let isExiting = false; 
@@ -155,11 +155,14 @@ function handleMarketUpdate(data) {
     const side = currentAssetId === currentYesToken ? 'YES' : (currentAssetId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
-    currentPrices[side] = bestAsk;
+    // Save for terminal logging
+    currentPrices[side] = { ask: bestAsk, bid: bestBid };
 
     // --- GLITCH LOCKOUT ---
     if (bestAsk >= 0.98) {
         glitchLockoutTimer = Date.now() + 3000;
+        lastMidpoint[side] = 0; // UPDATED: Wipes memory to prevent fake momentum gaps
+        trend[side] = 0;        // UPDATED: Resets trend math
         return;
     }
     if (Date.now() < glitchLockoutTimer) return;
@@ -182,7 +185,8 @@ function handleMarketUpdate(data) {
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
         // Organic Momentum Filter
-        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
+        // UPDATED: Speed limit increased to 0.09 to allow for thin market "teleports"
+        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.09;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
@@ -324,7 +328,7 @@ async function loadNextMarket() {
         
         lastMidpoint = { YES: 0, NO: 0 };
         trend = { YES: 0, NO: 0 };
-        currentPrices = { YES: 0, NO: 0 }; 
+        currentPrices = { YES: {ask: 0, bid: 0}, NO: {ask: 0, bid: 0} }; 
 
         console.log(`${colors.brightYellow}[MARKET LOADED] ${events[0].title}${colors.reset}`);
         connectWebsocket();
@@ -351,14 +355,20 @@ async function runLiveTrader() {
             return;
         }
 
-        if (currentPrices.YES > 0 && currentPrices.NO > 0) {
-            priceStream.write(`${new Date().toISOString()},${currentPrices.YES.toFixed(3)},${currentPrices.NO.toFixed(3)}\n`);
+        if (currentPrices.YES.ask > 0 && currentPrices.NO.ask > 0) {
+            // Unchanged: Maintains standard formatting for your data charts
+            priceStream.write(`${new Date().toISOString()},${currentPrices.YES.ask.toFixed(3)},${currentPrices.NO.ask.toFixed(3)}\n`);
         }
 
         if (Math.floor(now / 1000) % 10 === 0) {
             const statusColor = trade.active ? colors.cyan : colors.gray;
             const statusText = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING VOLATILITY';
-            console.log(`${statusColor}[LIVE] Status: ${statusText} | Balance: $${stats.currentBalance.toFixed(2)} | YES: $${currentPrices.YES.toFixed(3)} | NO: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
+            
+            // UPDATED: Terminal now calculates and prints the active spread
+            const yesSpread = currentPrices.YES.bid > 0 ? (currentPrices.YES.ask - currentPrices.YES.bid).toFixed(2) : "N/A";
+            const noSpread = currentPrices.NO.bid > 0 ? (currentPrices.NO.ask - currentPrices.NO.bid).toFixed(2) : "N/A";
+
+            console.log(`${statusColor}[LIVE] Status: ${statusText} | Bal: $${stats.currentBalance.toFixed(2)} | YES: $${currentPrices.YES.ask.toFixed(3)} (Spr: $${yesSpread}) | NO: $${currentPrices.NO.ask.toFixed(3)} (Spr: $${noSpread})${colors.reset}`);
         }
     }, 1000);
 }
