@@ -28,7 +28,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.95; // Updated to 0.95
+const ENTRY_VOLATILITY_THRESHOLD = 0.95; // Kept at 0.95 to filter out extreme noise
 const MAX_ALLOWED_SPREAD = 0.02; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
@@ -51,7 +51,6 @@ let stats = {
 
 let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
-let previousTrend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
 let recentTrades = []; // Keeps track of dashboard history
 
@@ -189,8 +188,8 @@ function handleMarketUpdate(data) {
 
     currentPrices[side] = bestAsk;
 
+    // --- REVERTED BACK TO SINGLE-TICK MEMORY ---
     if (lastMidpoint[side] !== 0) {
-        previousTrend[side] = trend[side];
         trend[side] = currentMid - lastMidpoint[side];
     }
     lastMidpoint[side] = currentMid;
@@ -208,7 +207,8 @@ function handleMarketUpdate(data) {
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05 && previousTrend[side] > 0;
+        // --- REVERTED BACK TO SINGLE-TICK AGGRESSIVE ENTRY ---
+        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
@@ -363,7 +363,7 @@ async function loadNextMarket() {
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
-            previousTrend = { YES: 0, NO: 0 };
+            // previousTrend removed here
             currentPrices = { YES: 0, NO: 0 }; 
 
             console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
