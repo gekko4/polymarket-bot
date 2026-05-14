@@ -1,10 +1,11 @@
 require('dotenv').config();
 const { ClobClient, OrderType } = require('@polymarket/clob-client');
-const { createWalletClient, http } = require('viem');
+const { createWalletClient, http: viemHttp } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
 const { polygon } = require('viem/chains');
 const WebSocket = require('ws'); 
 const fs = require('fs'); 
+const http = require('http'); // Required for the Mobile Web Dashboard
 
 // --- TERMINAL COLORS ---
 const colors = {
@@ -27,7 +28,7 @@ const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.90; 
+const ENTRY_VOLATILITY_THRESHOLD = 0.95; // Updated to 0.95
 const MAX_ALLOWED_SPREAD = 0.02; 
 const MIN_TP_CENTS = 0.02; 
 const MAX_TP_CENTS = 0.05; 
@@ -52,6 +53,7 @@ let lastMidpoint = { YES: 0, NO: 0 };
 let trend = { YES: 0, NO: 0 }; 
 let previousTrend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
+let recentTrades = []; // Keeps track of dashboard history
 
 let isExecuting = false;
 let isExiting = false; 
@@ -114,7 +116,6 @@ function logCompletedTrade(exitReason, exitPrice) {
     const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
     const roi = (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100).toFixed(2);
 
-    // Swap green for bright yellow so it pops on Parrot OS
     const c = netPnL > 0 ? colors.brightYellow : colors.red;
 
     console.log(`\n${colors.gray}========================================${colors.reset}`);
@@ -129,6 +130,16 @@ function logCompletedTrade(exitReason, exitPrice) {
 
     const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     tradeStream.write(logEntry); 
+
+    // Feed the mobile dashboard
+    recentTrades.unshift({ 
+        time: new Date().toLocaleTimeString(), 
+        reason: exitReason, 
+        entry: trade.entryPrice.toFixed(3), 
+        exit: exitPrice.toFixed(3), 
+        pnl: netPnL 
+    });
+    if (recentTrades.length > 10) recentTrades.pop();
 
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
@@ -146,7 +157,6 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
             return false;
         }
 
-        // Swap green for bright yellow
         const logColor = side === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
         console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${side} @ $${price.toFixed(3)}...${colors.reset}`);
         console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
@@ -224,8 +234,6 @@ function handleMarketUpdate(data) {
 
         const timeInTradeSec = (Date.now() - trade.entryTime) / 1000;
         if (timeInTradeSec > 20) {
-            // SLIPPAGE BRAKE: Only accept a Time Stop if the bid is reasonable (max 5-cent loss).
-            // If it flashes to $0.01, ignore it and let the standard Stop Loss handle it when liquidity returns.
             const minTimeStopBid = trade.entryPrice - 0.05; 
 
             if (bestBid <= trade.entryPrice && bestBid >= minTimeStopBid) {
@@ -371,11 +379,124 @@ async function loadNextMarket() {
     }
 }
 
+// --- MOBILE WEB DASHBOARD (ZERO DEPENDENCIES) ---
+http.createServer((req, res) => {
+    // API Route for live data fetching
+    if (req.url === '/api/live') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ stats, trade, currentPrices, recentTrades }));
+        return;
+    }
+
+    // Main UI Route
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <title>PolyBot Live</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+            h2 { margin-top: 0; font-size: 1.2rem; color: #8b949e; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+            .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+            .metric-value { font-size: 1.8rem; font-weight: bold; }
+            .green { color: #3fb950; } .red { color: #f85149; } .gold { color: #d29922; } .cyan { color: #58a6ff; }
+            .trade-row { display: flex; justify-content: space-between; font-size: 0.9rem; padding: 10px 0; border-bottom: 1px solid #21262d; }
+            .trade-row:last-child { border-bottom: none; }
+            .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; }
+            .bg-green { background: rgba(63, 185, 80, 0.1); color: #3fb950; }
+            .bg-red { background: rgba(248, 81, 73, 0.1); color: #f85149; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>Live Balance</h2>
+            <div class="metric-row">
+                <div class="metric-value" id="balance">$0.00</div>
+                <div id="roi" class="badge">0.00%</div>
+            </div>
+            <div style="font-size: 0.9rem; color: #8b949e;">Win Rate: <span id="winrate">0%</span></div>
+        </div>
+
+        <div class="card">
+            <h2>Current Engine Status</h2>
+            <div id="status" class="metric-value" style="font-size: 1.2rem; margin-bottom: 15px;">Initializing...</div>
+            <div class="metric-row" style="font-size: 0.9rem;">
+                <div>YES Ask: <span id="yes-price" class="cyan">$0.00</span></div>
+                <div>NO Ask: <span id="no-price" class="gold">$0.00</span></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Recent Trades</h2>
+            <div id="history">Waiting for trades...</div>
+        </div>
+
+        <script>
+            async function updateDashboard() {
+                try {
+                    const res = await fetch('/api/live');
+                    const data = await res.json();
+                    
+                    // Update Balance
+                    document.getElementById('balance').innerText = '$' + data.stats.currentBalance.toFixed(2);
+                    const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
+                    const roiEl = document.getElementById('roi');
+                    roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%';
+                    roiEl.className = 'badge ' + (roi >= 0 ? 'bg-green' : 'bg-red');
+                    
+                    // Update Win Rate
+                    const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
+                    document.getElementById('winrate').innerText = wr + '% (' + data.stats.wins + 'W / ' + data.stats.losses + 'L)';
+
+                    // Update Status
+                    const statusEl = document.getElementById('status');
+                    if (data.trade.active) {
+                        statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ $' + data.trade.entryPrice.toFixed(3);
+                    } else {
+                        statusEl.innerHTML = '<span class="gold">HUNTING VOLATILITY</span>';
+                    }
+
+                    // Update Prices
+                    document.getElementById('yes-price').innerText = '$' + data.currentPrices.YES.toFixed(3);
+                    document.getElementById('no-price').innerText = '$' + data.currentPrices.NO.toFixed(3);
+
+                    // Update History
+                    if (data.recentTrades.length > 0) {
+                        let html = '';
+                        data.recentTrades.forEach(t => {
+                            const pnlColor = t.pnl > 0 ? 'green' : 'red';
+                            const pnlSign = t.pnl > 0 ? '+' : '';
+                            html += \`<div class="trade-row">
+                                        <div><span style="color:#8b949e">\${t.time}</span> <br> \${t.reason}</div>
+                                        <div style="text-align: right;">E: $\${t.entry} &rarr; $\${t.exit} <br> <span class="\${pnlColor}">\${pnlSign}$\${t.pnl.toFixed(4)}</span></div>
+                                      </div>\`;
+                        });
+                        document.getElementById('history').innerHTML = html;
+                    }
+                } catch (e) { console.error("Sync error"); }
+            }
+            // Auto-refresh seamlessly every 1.5 seconds
+            setInterval(updateDashboard, 1500);
+            updateDashboard();
+        </script>
+    </body>
+    </html>
+    `);
+}).listen(3000, '0.0.0.0', () => {
+    console.log(`${colors.cyan}[DASHBOARD] Web UI running on port 3000${colors.reset}`);
+});
+
 async function runLiveTrader() {
     console.log(`${colors.magenta}Booting Pure Dynamic Near-Strike Engine in PAPER TRADING MODE...${colors.reset}`);
     
     const account = privateKeyToAccount(rawKey);
-    const walletClient = createWalletClient({ account, chain: polygon, transport: http() });
+    const walletClient = createWalletClient({ account, chain: polygon, transport: viemHttp() });
     clobClient = new ClobClient(HOST, CHAIN_ID, walletClient);
 
     let creds;
