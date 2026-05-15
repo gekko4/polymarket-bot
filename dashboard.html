@@ -170,8 +170,8 @@
                 <span id="status">Initializing...</span>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 0.95rem;">
-                <div>YES: <span id="yes-price" class="cyan font-bold">$0.00</span></div>
-                <div>NO: <span id="no-price" class="gold font-bold">$0.00</span></div>
+                <div>YES: <span id="yes-price" class="cyan font-bold">0¢</span></div>
+                <div>NO: <span id="no-price" class="gold font-bold">0¢</span></div>
             </div>
         </div>
 
@@ -199,7 +199,7 @@
                 const res = await fetch('/api/live');
                 const data = await res.json();
                 
-                // Update Balance & ROI
+                // Update Balance & ROI (Keep these in dollars/USD)
                 document.getElementById('balance').innerText = '$' + data.stats.currentBalance.toFixed(2);
                 const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
                 const roiEl = document.getElementById('roi');
@@ -215,16 +215,20 @@
                 // Update Status & Prices
                 const statusEl = document.getElementById('status');
                 const pulseEl = document.getElementById('pulse-indicator');
+                
                 if (data.trade.active) {
                     pulseEl.className = 'pulse active';
-                    statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ $' + data.trade.entryPrice.toFixed(3);
+                    // Convert holding price to whole cents
+                    const entryCents = Math.round(data.trade.entryPrice * 100);
+                    statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ ' + entryCents + '¢';
                 } else {
                     pulseEl.className = 'pulse';
                     statusEl.innerHTML = '<span class="gold">HUNTING VOLATILITY</span>';
                 }
 
-                document.getElementById('yes-price').innerText = '$' + data.currentPrices.YES.toFixed(3);
-                document.getElementById('no-price').innerText = '$' + data.currentPrices.NO.toFixed(3);
+                // Convert market prices to whole cents (multiply by 100)
+                document.getElementById('yes-price').innerText = Math.round(data.currentPrices.YES * 100) + '¢';
+                document.getElementById('no-price').innerText = Math.round(data.currentPrices.NO * 100) + '¢';
 
                 // Update History
                 if (data.recentTrades.length > 0) {
@@ -232,20 +236,27 @@
                     data.recentTrades.forEach(t => {
                         const pnlColor = t.pnl > 0 ? 'green' : 'red';
                         const pnlSign = t.pnl > 0 ? '+' : '';
-                        html += \`<div class="trade-row">
+                        
+                        // Convert string decimal prices back to whole cents for history list
+                        const entryCents = Math.round(parseFloat(t.entry) * 100);
+                        const exitCents = Math.round(parseFloat(t.exit) * 100);
+
+                        html += `<div class="trade-row">
                                     <div>
-                                        <div class="trade-time">\${t.time}</div>
-                                        <div class="trade-reason">\${t.reason}</div>
+                                        <div class="trade-time">${t.time}</div>
+                                        <div class="trade-reason">${t.reason}</div>
                                     </div>
                                     <div style="text-align: right;">
-                                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px;">$\${t.entry} &rarr; $\${t.exit}</div>
-                                        <div class="\${pnlColor} font-bold">\${pnlSign}$\${t.pnl.toFixed(4)}</div>
+                                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px;">${entryCents}¢ &rarr; ${exitCents}¢</div>
+                                        <div class="${pnlColor} font-bold">${pnlSign}$${t.pnl.toFixed(4)}</div>
                                     </div>
-                                  </div>\`;
+                                  </div>`;
                     });
                     document.getElementById('history').innerHTML = html;
                 }
-            } catch (e) { console.error("Sync error"); }
+            } catch (e) { 
+                console.error("Sync error", e); 
+            }
         }
         setInterval(updateDashboard, 1500);
         updateDashboard();
