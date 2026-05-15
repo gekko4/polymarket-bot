@@ -30,10 +30,10 @@ const HOST = 'https://clob.polymarket.com';
 // --- STRIKE PROXIMITY CONFIG ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
 const MAX_ALLOWED_SPREAD = 0.02; 
-const MIN_TP_CENTS = 0.02; 
-const MAX_TP_CENTS = 0.05; 
-const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.12; 
+const MIN_TP_CENTS = 0.03;  // UPDATED
+const MAX_TP_CENTS = 0.08;  // UPDATED
+const MIN_SL_CENTS = 0.03;  // UPDATED
+const MAX_SL_CENTS = 0.08;  // UPDATED
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
