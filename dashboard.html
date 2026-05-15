@@ -5,42 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PolyBot // Execution Terminal</title>
+    <title>PolyBot Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=Ubuntu+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-main: #050505;
-            --bg-grid: rgba(255, 255, 255, 0.02);
             --card-bg: rgba(18, 18, 22, 0.65);
-            --card-border: rgba(255, 255, 255, 0.06);
+            --card-border: rgba(14, 165, 233, 0.15);
             --text-main: #f1f5f9;
-            --text-muted: #8b9bb4;
+            --text-muted: #64748b;
             --accent-cyan: #0ea5e9;
             --accent-cyan-glow: rgba(14, 165, 233, 0.4);
-            --accent-gold: #eab308;
-            --accent-gold-glow: rgba(234, 179, 8, 0.4);
             --accent-green: #10b981;
             --accent-red: #ef4444;
             
             --font-ui: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
+            --font-mono: 'Ubuntu Mono', monospace;
         }
         
         body { 
             font-family: var(--font-ui); 
             background-color: var(--bg-main); 
-            /* High-tech grid & glowing orb background */
             background-image: 
-                linear-gradient(var(--bg-grid) 1px, transparent 1px),
-                linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px),
-                radial-gradient(circle at 80% 20%, rgba(14, 165, 233, 0.08), transparent 40%),
-                radial-gradient(circle at 20% 80%, rgba(234, 179, 8, 0.05), transparent 40%);
-            background-size: 30px 30px, 30px 30px, 100% 100%, 100% 100%;
+                radial-gradient(circle at top right, rgba(16, 185, 129, 0.05), transparent 40%),
+                radial-gradient(circle at bottom left, rgba(239, 68, 68, 0.05), transparent 40%);
             color: var(--text-main); 
             margin: 0; 
-            padding: 32px 16px;
+            padding: 24px 16px;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
@@ -53,112 +46,97 @@
         }
 
         .header-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            text-align: center;
             margin-bottom: 24px;
             animation: fadeDown 0.6s ease-out;
-            padding: 0 8px;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Reusable Gold Gradient Class */
+        .gold-gradient-text {
+            background: linear-gradient(90deg, #f59e0b, #fcd34d, #fef08a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: inline-block;
         }
 
         .header-container h1 {
             font-weight: 800;
             margin: 0;
-            font-size: 1.2rem;
+            font-size: 1.5rem;
             letter-spacing: 1px;
             text-transform: uppercase;
-            background: linear-gradient(135deg, #fff, #8b9bb4);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .live-badge {
-            font-family: var(--font-mono);
-            font-size: 0.7rem;
-            font-weight: 700;
-            padding: 4px 8px;
-            border-radius: 4px;
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--accent-green);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            letter-spacing: 0.5px;
-        }
-
-        .live-dot {
-            width: 6px;
-            height: 6px;
-            background-color: var(--accent-green);
-            border-radius: 50%;
-            animation: blink 1.5s infinite;
         }
 
         .hero-section {
             text-align: center;
-            padding: 40px 24px;
-            background: var(--card-bg);
+            padding: 28px 20px 32px 20px;
+            background: linear-gradient(180deg, rgba(14, 165, 233, 0.08) 0%, rgba(22, 27, 34, 0) 100%);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--card-border);
-            border-radius: 20px;
-            margin-bottom: 24px;
+            border-radius: 24px;
+            margin-bottom: 16px;
             animation: fadeUp 0.6s ease-out;
             box-shadow: 0 10px 40px -10px rgba(0,0,0,0.5);
             position: relative;
             overflow: hidden;
-        }
-
-        /* Subtle glowing top border for the hero */
-        .hero-section::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            box-sizing: border-box;
         }
 
         .hero-subheading {
-            color: var(--text-muted);
-            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            font-size: 0.9rem;
             font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-bottom: 12px;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
         }
 
         .balance-display {
             font-family: var(--font-mono);
-            font-size: 3.5rem;
-            font-weight: 800;
+            font-size: 3.2rem;
+            font-weight: 700;
             margin-bottom: 16px;
-            text-shadow: 0 0 30px rgba(255,255,255,0.05);
+            text-shadow: 0 0 20px rgba(255,255,255,0.1);
             letter-spacing: -1px;
         }
 
-        .badge { 
+        /* Upgraded ROI Subcard */
+        .roi-subcard { 
             font-family: var(--font-mono);
-            padding: 8px 16px; 
-            border-radius: 8px; 
-            font-size: 0.9rem; 
+            padding: 10px 20px; 
+            border-radius: 16px; 
+            font-size: 1rem; 
             font-weight: 700; 
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             letter-spacing: 0.5px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
         }
-        .bg-green { background: rgba(16, 185, 129, 0.1); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.2); }
-        .bg-red { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.2); }
+        .roi-green { 
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(16, 185, 129, 0.05)); 
+            border: 1px solid rgba(16, 185, 129, 0.4); 
+            color: #34d399; 
+            text-shadow: 0 0 10px rgba(16,185,129,0.3);
+        }
+        .roi-red { 
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.05)); 
+            border: 1px solid rgba(239, 68, 68, 0.4); 
+            color: #f87171; 
+            text-shadow: 0 0 10px rgba(239,68,68,0.3);
+        }
 
         .grid-container {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
+            gap: 12px;
+            margin-bottom: 16px;
             animation: fadeUp 0.8s ease-out;
         }
 
@@ -168,17 +146,19 @@
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--card-border); 
             border-radius: 16px; 
-            padding: 24px; 
+            padding: 16px; 
             box-shadow: 0 8px 32px rgba(0,0,0,0.2); 
-            transition: transform 0.2s ease, border-color 0.2s ease;
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
         }
 
         .card:hover {
-            border-color: rgba(255,255,255,0.1);
+            border-color: rgba(14, 165, 233, 0.4);
+            box-shadow: 0 8px 32px rgba(14, 165, 233, 0.05);
         }
 
         .card.full-width { grid-column: 1 / -1; }
 
+        /* Replaced borders with clean indicator dots */
         .card h2 { 
             margin-top: 0; 
             font-size: 0.75rem; 
@@ -189,25 +169,37 @@
             margin-bottom: 16px; 
             display: flex;
             align-items: center;
+            gap: 8px;
+        }
+
+        .card h2::before {
+            content: '';
+            display: block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background-color: var(--accent-cyan);
+            box-shadow: 0 0 8px var(--accent-cyan-glow);
         }
 
         .metric-value { 
             font-family: var(--font-mono);
-            font-size: 1.8rem; 
+            font-size: 1.6rem; 
             font-weight: 700; 
             letter-spacing: -0.5px;
         }
         
+        #winrate-pct { color: var(--accent-cyan); }
+
         .metric-sub {
             font-family: var(--font-mono);
-            font-size: 0.85rem; 
+            font-size: 0.8rem; 
             color: var(--text-muted);
-            margin-top: 6px;
+            margin-top: 4px;
         }
 
         .green { color: var(--accent-green); } 
         .red { color: var(--accent-red); } 
-        .gold { color: var(--accent-gold); } 
         .cyan { color: var(--accent-cyan); }
         .font-mono { font-family: var(--font-mono); }
 
@@ -215,18 +207,21 @@
             display: flex; 
             justify-content: space-between; 
             font-size: 0.95rem;
-            margin-top: 20px;
+            margin-top: 16px;
             padding-top: 16px;
-            border-top: 1px dashed rgba(255,255,255,0.1);
+            border-top: 1px dashed rgba(255,255,255,0.05);
         }
 
         .price-tag {
             background: rgba(0,0,0,0.3);
             padding: 6px 12px;
-            border-radius: 6px;
+            border-radius: 8px;
             font-family: var(--font-mono);
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .trade-row { 
@@ -234,7 +229,7 @@
             justify-content: space-between; 
             align-items: center;
             font-size: 0.9rem; 
-            padding: 16px 0; 
+            padding: 12px 0; 
             border-bottom: 1px solid rgba(255,255,255,0.05); 
         }
         .trade-row:last-child { border-bottom: none; padding-bottom: 0; }
@@ -243,14 +238,15 @@
             font-family: var(--font-mono);
             color: var(--text-muted); 
             font-size: 0.75rem; 
-            margin-bottom: 6px; 
+            margin-bottom: 4px; 
             letter-spacing: 0.5px;
         }
         
         .trade-reason { 
-            font-weight: 500; 
-            font-size: 0.95rem;
-            color: var(--text-main);
+            font-weight: 600; 
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
         }
 
         .trade-metrics {
@@ -261,7 +257,7 @@
         .trade-route {
             font-size: 0.8rem; 
             color: var(--text-muted); 
-            margin-bottom: 6px;
+            margin-bottom: 4px;
             display: flex;
             align-items: center;
             justify-content: flex-end;
@@ -269,16 +265,15 @@
         }
 
         .pnl-display {
-            font-size: 1.05rem;
+            font-size: 1rem;
             font-weight: 700;
         }
 
         .empty-history {
-            color: var(--text-muted); 
+            opacity: 0.8;
             font-size: 0.9rem;
-            font-style: italic;
             text-align: center;
-            padding: 20px 0;
+            padding: 16px 0;
             font-family: var(--font-mono);
         }
 
@@ -291,15 +286,14 @@
             to { opacity: 1; transform: translateY(0); }
         }
         
-        /* Status pulses */
         .pulse {
             display: inline-block;
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            margin-right: 12px;
-            background: var(--accent-gold);
-            box-shadow: 0 0 12px var(--accent-gold-glow);
+            margin-right: 10px;
+            background: #fcd34d;
+            box-shadow: 0 0 12px rgba(252, 211, 77, 0.4);
             animation: blink 1.5s infinite;
         }
         .pulse.active { 
@@ -312,28 +306,25 @@
 <body>
     <div class="container">
         <div class="header-container">
-            <h1>PolyBot // Terminal</h1>
-            <div class="live-badge">
-                <div class="live-dot"></div> SYS_ONLINE
-            </div>
+            <h1 class="gold-gradient-text">PolyBot Terminal</h1>
         </div>
 
         <div class="hero-section">
-            <div class="hero-subheading">Net Asset Value (NAV)</div>
+            <div class="hero-subheading">PORTFOLIO</div>
             <div class="balance-display" id="balance">$0.00</div>
-            <div id="roi" class="badge">0.00% ROI</div>
+            <div id="roi" class="roi-subcard roi-green">0.00% ROI</div>
         </div>
 
         <div class="grid-container">
             <div class="card full-width">
                 <h2>Algo Status</h2>
-                <div class="metric-value" style="font-size: 1.3rem; display: flex; align-items: center;">
+                <div class="metric-value" style="font-size: 1.2rem; display: flex; align-items: center;">
                     <div id="pulse-indicator" class="pulse"></div>
-                    <span id="status">INITIALIZING SYSTEMS...</span>
+                    <span id="status" class="gold-gradient-text" style="letter-spacing: 0.5px;">INITIALIZING SYSTEMS...</span>
                 </div>
                 <div class="market-prices">
-                    <div class="price-tag"><span class="text-muted">YES</span> <span id="yes-price" class="cyan font-mono" style="margin-left:8px;">0¢</span></div>
-                    <div class="price-tag"><span class="text-muted">NO</span> <span id="no-price" class="gold font-mono" style="margin-left:8px;">0¢</span></div>
+                    <div class="price-tag"><span class="text-muted">YES</span> <span id="yes-price" class="cyan font-mono">0¢</span></div>
+                    <div class="price-tag"><span class="text-muted">NO</span> <span id="no-price" class="gold-gradient-text font-mono">0¢</span></div>
                 </div>
             </div>
 
@@ -345,14 +336,14 @@
 
             <div class="card">
                 <h2>Executions</h2>
-                <div id="total-trades" class="metric-value">0</div>
+                <div id="total-trades" class="metric-value gold-gradient-text" style="display: block;">0</div>
                 <div class="metric-sub">Total Settled</div>
             </div>
 
             <div class="card full-width" style="animation-delay: 0.1s;">
                 <h2>Trade Ledger</h2>
                 <div id="history">
-                    <div class="empty-history">Awaiting execution signals...</div>
+                    <div class="empty-history gold-gradient-text">Awaiting execution signals...</div>
                 </div>
             </div>
         </div>
@@ -369,7 +360,7 @@
                 const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
                 const roiEl = document.getElementById('roi');
                 roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
-                roiEl.className = 'badge ' + (roi >= 0 ? 'bg-green' : 'bg-red');
+                roiEl.className = 'roi-subcard ' + (roi >= 0 ? 'roi-green' : 'roi-red');
                 
                 // Update Stats
                 const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
@@ -384,10 +375,14 @@
                 if (data.trade.active) {
                     pulseEl.className = 'pulse active';
                     const entryCents = Math.round(data.trade.entryPrice * 100);
+                    // Standard inline cyan for holding status
                     statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> <span style="color:var(--text-muted);font-weight:400;margin-left:8px;">@ ' + entryCents + '¢</span>';
+                    statusEl.className = ''; 
                 } else {
                     pulseEl.className = 'pulse';
-                    statusEl.innerHTML = '<span class="gold" style="letter-spacing: 0.5px;">AWAITING SIGNAL</span>';
+                    // Re-apply gold gradient class for awaiting state
+                    statusEl.innerHTML = 'AWAITING SIGNAL';
+                    statusEl.className = 'gold-gradient-text';
                 }
 
                 document.getElementById('yes-price').innerText = Math.round(data.currentPrices.YES * 100) + '¢';
@@ -403,10 +398,18 @@
                         const entryCents = Math.round(parseFloat(t.entry) * 100);
                         const exitCents = Math.round(parseFloat(t.exit) * 100);
 
+                        let reasonColor = 'var(--accent-cyan)';
+                        const reasonUpper = t.reason.toUpperCase();
+                        if (reasonUpper.includes('BUY') || reasonUpper.includes('PROFIT') || reasonUpper.includes('ENTRY')) {
+                            reasonColor = 'var(--accent-green)';
+                        } else if (reasonUpper.includes('SELL') || reasonUpper.includes('LOSS') || reasonUpper.includes('STOP') || reasonUpper.includes('EXIT')) {
+                            reasonColor = 'var(--accent-red)';
+                        }
+
                         html += `<div class="trade-row">
                                     <div>
                                         <div class="trade-time">${t.time}</div>
-                                        <div class="trade-reason">${t.reason}</div>
+                                        <div class="trade-reason" style="color: ${reasonColor}">${t.reason}</div>
                                     </div>
                                     <div class="trade-metrics">
                                         <div class="trade-route">${entryCents}¢ <span style="color: var(--text-muted)">→</span> ${exitCents}¢</div>
