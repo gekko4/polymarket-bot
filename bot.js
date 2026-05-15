@@ -29,11 +29,13 @@ const HOST = 'https://clob.polymarket.com';
 
 // --- STRIKE PROXIMITY CONFIG ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
-const MAX_ALLOWED_SPREAD = 0.02; 
-const MIN_TP_CENTS = 0.03;  // UPDATED
-const MAX_TP_CENTS = 0.08;  // UPDATED
-const MIN_SL_CENTS = 0.03;  // UPDATED
-const MAX_SL_CENTS = 0.08;  // UPDATED
+const MAX_ALLOWED_SPREAD = 0.02; // Prevents entering on bad spreads
+const MAX_EXIT_SPREAD = 0.04;    // NEW: Prevents exiting (Stop Loss) on bad spreads
+
+const MIN_TP_CENTS = 0.03; 
+const MAX_TP_CENTS = 0.08; 
+const MIN_SL_CENTS = 0.03; 
+const MAX_SL_CENTS = 0.08; 
 
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
@@ -144,9 +146,9 @@ function logCompletedTrade(exitReason, exitPrice) {
     trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
     isExiting = false; 
     
-    // FIX: Only apply the 5-second breather if the trade was a Stop Loss
+    // NEW: Increased breather to 30 seconds after a loss to prevent revenge trading
     if (exitReason === "STOP LOSS") {
-        postTradeCooldown = Date.now() + 5000; 
+        postTradeCooldown = Date.now() + 30000; 
     } else {
         postTradeCooldown = 0; // Instantly ready for the next setup if it was a win
     }
@@ -263,6 +265,14 @@ function handleMarketUpdate(data) {
         const minReasonableBid = stopLossPrice - 0.03; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
+            // NEW: Exit Spread Protection 
+            if (spread > MAX_EXIT_SPREAD) {
+                // The bid crashed, but the Ask is still high. Market maker just ghosted.
+                // Log it, but DO NOT sell.
+                console.log(`${colors.yellow}[SHAKEOUT AVOIDED] Bid crashed to $${bestBid.toFixed(2)} but spread is wide ($${spread.toFixed(2)}). Holding position.${colors.reset}`);
+                return; 
+            }
+
             isExiting = true;
             executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
                 if (res.success) logCompletedTrade("STOP LOSS", bestBid); 
