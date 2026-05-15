@@ -383,6 +383,8 @@ async function loadNextMarket() {
 }
 
 // --- MOBILE WEB DASHBOARD (ZERO DEPENDENCIES) ---
+const path = require('path');
+
 http.createServer((req, res) => {
     if (req.url === '/api/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -390,99 +392,16 @@ http.createServer((req, res) => {
         return;
     }
 
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-        <title>PolyBot Live</title>
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-            .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-            h2 { margin-top: 0; font-size: 1.2rem; color: #8b949e; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
-            .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-            .metric-value { font-size: 1.8rem; font-weight: bold; }
-            .green { color: #3fb950; } .red { color: #f85149; } .gold { color: #d29922; } .cyan { color: #58a6ff; }
-            .trade-row { display: flex; justify-content: space-between; font-size: 0.9rem; padding: 10px 0; border-bottom: 1px solid #21262d; }
-            .trade-row:last-child { border-bottom: none; }
-            .badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; }
-            .bg-green { background: rgba(63, 185, 80, 0.1); color: #3fb950; }
-            .bg-red { background: rgba(248, 81, 73, 0.1); color: #f85149; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>Live Balance</h2>
-            <div class="metric-row">
-                <div class="metric-value" id="balance">$0.00</div>
-                <div id="roi" class="badge">0.00%</div>
-            </div>
-            <div style="font-size: 0.9rem; color: #8b949e;">Win Rate: <span id="winrate">0%</span></div>
-        </div>
-
-        <div class="card">
-            <h2>Current Engine Status</h2>
-            <div id="status" class="metric-value" style="font-size: 1.2rem; margin-bottom: 15px;">Initializing...</div>
-            <div class="metric-row" style="font-size: 0.9rem;">
-                <div>YES Ask: <span id="yes-price" class="cyan">$0.00</span></div>
-                <div>NO Ask: <span id="no-price" class="gold">$0.00</span></div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Recent Trades</h2>
-            <div id="history">Waiting for trades...</div>
-        </div>
-
-        <script>
-            async function updateDashboard() {
-                try {
-                    const res = await fetch('/api/live');
-                    const data = await res.json();
-                    
-                    document.getElementById('balance').innerText = '$' + data.stats.currentBalance.toFixed(2);
-                    const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
-                    const roiEl = document.getElementById('roi');
-                    roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%';
-                    roiEl.className = 'badge ' + (roi >= 0 ? 'bg-green' : 'bg-red');
-                    
-                    const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
-                    document.getElementById('winrate').innerText = wr + '% (' + data.stats.wins + 'W / ' + data.stats.losses + 'L)';
-
-                    const statusEl = document.getElementById('status');
-                    if (data.trade.active) {
-                        statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ $' + data.trade.entryPrice.toFixed(3);
-                    } else {
-                        statusEl.innerHTML = '<span class="gold">HUNTING VOLATILITY</span>';
-                    }
-
-                    document.getElementById('yes-price').innerText = '$' + data.currentPrices.YES.toFixed(3);
-                    document.getElementById('no-price').innerText = '$' + data.currentPrices.NO.toFixed(3);
-
-                    if (data.recentTrades.length > 0) {
-                        let html = '';
-                        data.recentTrades.forEach(t => {
-                            const pnlColor = t.pnl > 0 ? 'green' : 'red';
-                            const pnlSign = t.pnl > 0 ? '+' : '';
-                            html += \`<div class="trade-row">
-                                        <div><span style="color:#8b949e">\${t.time}</span> <br> \${t.reason}</div>
-                                        <div style="text-align: right;">E: $\${t.entry} &rarr; $\${t.exit} <br> <span class="\${pnlColor}">\${pnlSign}$\${t.pnl.toFixed(4)}</span></div>
-                                      </div>\`;
-                        });
-                        document.getElementById('history').innerHTML = html;
-                    }
-                } catch (e) { console.error("Sync error"); }
-            }
-            setInterval(updateDashboard, 1500);
-            updateDashboard();
-        </script>
-    </body>
-    </html>
-    `);
+    // Read the HTML file dynamically so you can edit it without restarting the bot!
+    fs.readFile(path.join(__dirname, 'dashboard.html'), 'utf8', (err, data) => {
+        if (err) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Error loading dashboard UI. Make sure dashboard.html exists.');
+            return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(data);
+    });
 }).listen(3000, '0.0.0.0', () => {
     console.log(`${colors.cyan}[DASHBOARD] Web UI running on port 3000${colors.reset}`);
 });

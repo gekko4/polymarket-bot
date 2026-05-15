@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>PolyBot Live</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #0a0a0c;
+            --card-bg: rgba(22, 27, 34, 0.6);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent-cyan: #38bdf8;
+            --accent-gold: #fbbf24;
+            --accent-green: #34d399;
+            --accent-red: #f87171;
+        }
+        
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-main); 
+            background-image: radial-gradient(circle at top right, rgba(56, 189, 248, 0.05), transparent 40%),
+                              radial-gradient(circle at bottom left, rgba(251, 191, 36, 0.05), transparent 40%);
+            color: var(--text-main); 
+            margin: 0; 
+            padding: 24px 16px;
+            min-height: 100vh;
+        }
+
+        .header-container {
+            text-align: center;
+            margin-bottom: 24px;
+            animation: fadeDown 0.6s ease-out;
+        }
+
+        .header-container h1 {
+            font-weight: 800;
+            margin: 0;
+            font-size: 1.5rem;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-section {
+            text-align: center;
+            padding: 32px 20px;
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0.1) 0%, rgba(22, 27, 34, 0) 100%);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            margin-bottom: 24px;
+            animation: fadeUp 0.6s ease-out;
+        }
+
+        .hero-subheading {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .balance-display {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 12px;
+            text-shadow: 0 0 20px rgba(255,255,255,0.1);
+        }
+
+        .badge { 
+            padding: 6px 12px; 
+            border-radius: 20px; 
+            font-size: 0.85rem; 
+            font-weight: 600; 
+            display: inline-block;
+        }
+        .bg-green { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); border: 1px solid rgba(52,211,153,0.3); }
+        .bg-red { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); border: 1px solid rgba(248,113,113,0.3); }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+            animation: fadeUp 0.8s ease-out;
+        }
+
+        .card { 
+            background: var(--card-bg); 
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border); 
+            border-radius: 16px; 
+            padding: 20px; 
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2); 
+        }
+
+        .card.full-width { grid-column: 1 / -1; }
+
+        .card h2 { 
+            margin-top: 0; 
+            font-size: 0.9rem; 
+            color: var(--text-muted); 
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px; 
+        }
+
+        .metric-value { font-size: 1.4rem; font-weight: 600; }
+        .green { color: var(--accent-green); } 
+        .red { color: var(--accent-red); } 
+        .gold { color: var(--accent-gold); } 
+        .cyan { color: var(--accent-cyan); }
+
+        .trade-row { 
+            display: flex; 
+            justify-content: space-between; 
+            font-size: 0.9rem; 
+            padding: 12px 0; 
+            border-bottom: 1px solid var(--card-border); 
+        }
+        .trade-row:last-child { border-bottom: none; }
+        
+        .trade-time { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 4px; }
+        .trade-reason { font-weight: 600; }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Status pulses */
+        .pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: var(--accent-gold);
+            box-shadow: 0 0 10px var(--accent-gold);
+            animation: blink 1.5s infinite;
+        }
+        .pulse.active { background: var(--accent-cyan); box-shadow: 0 0 10px var(--accent-cyan); }
+        @keyframes blink { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+    </style>
+</head>
+<body>
+    <div class="header-container">
+        <h1>PolyBot Terminal</h1>
+    </div>
+
+    <div class="hero-section">
+        <div class="hero-subheading">Live Portfolio Balance</div>
+        <div class="balance-display" id="balance">$0.00</div>
+        <div id="roi" class="badge">0.00%</div>
+    </div>
+
+    <div class="grid-container">
+        <div class="card full-width">
+            <h2>Engine Status</h2>
+            <div class="metric-value" style="font-size: 1.1rem; margin-bottom: 16px; display: flex; align-items: center;">
+                <div id="pulse-indicator" class="pulse"></div>
+                <span id="status">Initializing...</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 0.95rem;">
+                <div>YES: <span id="yes-price" class="cyan font-bold">$0.00</span></div>
+                <div>NO: <span id="no-price" class="gold font-bold">$0.00</span></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Win Rate</h2>
+            <div id="winrate-pct" class="metric-value" style="margin-bottom: 4px;">0%</div>
+            <div id="winrate-details" style="font-size: 0.8rem; color: var(--text-muted);">0W / 0L</div>
+        </div>
+
+        <div class="card">
+            <h2>Trades</h2>
+            <div id="total-trades" class="metric-value" style="margin-bottom: 4px;">0</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Total Executed</div>
+        </div>
+
+        <div class="card full-width" style="animation-delay: 0.2s;">
+            <h2>Recent Activity</h2>
+            <div id="history" style="color: var(--text-muted); font-size: 0.9rem;">Waiting for trades...</div>
+        </div>
+    </div>
+
+    <script>
+        async function updateDashboard() {
+            try {
+                const res = await fetch('/api/live');
+                const data = await res.json();
+                
+                // Update Balance & ROI
+                document.getElementById('balance').innerText = '$' + data.stats.currentBalance.toFixed(2);
+                const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
+                const roiEl = document.getElementById('roi');
+                roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
+                roiEl.className = 'badge ' + (roi >= 0 ? 'bg-green' : 'bg-red');
+                
+                // Update Stats
+                const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
+                document.getElementById('winrate-pct').innerText = wr + '%';
+                document.getElementById('winrate-details').innerText = data.stats.wins + 'W / ' + data.stats.losses + 'L';
+                document.getElementById('total-trades').innerText = data.stats.totalTrades;
+
+                // Update Status & Prices
+                const statusEl = document.getElementById('status');
+                const pulseEl = document.getElementById('pulse-indicator');
+                if (data.trade.active) {
+                    pulseEl.className = 'pulse active';
+                    statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> @ $' + data.trade.entryPrice.toFixed(3);
+                } else {
+                    pulseEl.className = 'pulse';
+                    statusEl.innerHTML = '<span class="gold">HUNTING VOLATILITY</span>';
+                }
+
+                document.getElementById('yes-price').innerText = '$' + data.currentPrices.YES.toFixed(3);
+                document.getElementById('no-price').innerText = '$' + data.currentPrices.NO.toFixed(3);
+
+                // Update History
+                if (data.recentTrades.length > 0) {
+                    let html = '';
+                    data.recentTrades.forEach(t => {
+                        const pnlColor = t.pnl > 0 ? 'green' : 'red';
+                        const pnlSign = t.pnl > 0 ? '+' : '';
+                        html += \`<div class="trade-row">
+                                    <div>
+                                        <div class="trade-time">\${t.time}</div>
+                                        <div class="trade-reason">\${t.reason}</div>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px;">$\${t.entry} &rarr; $\${t.exit}</div>
+                                        <div class="\${pnlColor} font-bold">\${pnlSign}$\${t.pnl.toFixed(4)}</div>
+                                    </div>
+                                  </div>\`;
+                    });
+                    document.getElementById('history').innerHTML = html;
+                }
+            } catch (e) { console.error("Sync error"); }
+        }
+        setInterval(updateDashboard, 1500);
+        updateDashboard();
+    </script>
+</body>
+</html>
