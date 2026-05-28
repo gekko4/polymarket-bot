@@ -30,10 +30,16 @@ const HOST = 'https://clob.polymarket.com';
 // --- STRIKE PROXIMITY CONFIG ---
 const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
 const MAX_ALLOWED_SPREAD = 0.02; // Prevents entering on bad spreads
-const MAX_EXIT_SPREAD = 0.04;    // NEW: Prevents exiting (Stop Loss) on bad spreads
 
-const MIN_TP_CENTS = 0.03; 
-const MAX_TP_CENTS = 0.08; 
+// --- EXIT / BAILOUT TUNING (LOOSENED PER REQUEST) ---
+const MAX_EXIT_SPREAD = 0.08;    // Loosened from 0.04 to allow exits when MMs widen spread
+const COLLAPSE_THRESHOLD = 0.10; // Trigger panic handling earlier (not heavily used here but available)
+const COLLAPSE_WINDOW_SEC = 25;  // Wider detection window for collapse logic
+const MIN_BID_SIZE_FOR_EXIT = 0.15; // Allow exits into thinner bids during crash
+
+// Wider TP to let winners run; SL kept conservative
+const MIN_TP_CENTS = 0.06;       // Raised base TP to 6 cents
+const MAX_TP_CENTS = 0.18;       // Let winners run up to 18 cents in high volatility
 const MIN_SL_CENTS = 0.03; 
 const MAX_SL_CENTS = 0.08; 
 
@@ -84,7 +90,9 @@ console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
     // Strip ANSI colors so the text file remains clean and readable
-    const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
+    const cleanMessage = message.replace(/\x1b
+
+\[[0-9;]*m/g, '');
     // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
@@ -224,7 +232,7 @@ function handleMarketUpdate(data) {
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
             executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
-                if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now() };
+                if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
             });
         }
         return; 
@@ -232,12 +240,15 @@ function handleMarketUpdate(data) {
 
     if (trade.active && trade.tokenId === tokenId && !isExecuting && !isExiting) {
         
-        if (secondsLeft <= 5) {
-            console.log(`\n${colors.magenta}[EXPIRATION BAILOUT] Market ending. Dumping bag to avoid resolution!${colors.reset}`);
+        if (secondsLeft <= 8) {
+            console.log(`\n${colors.magenta}[EXPIRATION BAILOUT] Market ending. Attempting controlled exit before resolution!${colors.reset}`);
             isExiting = true;
-            const bailoutPrice = Math.max(0.01, bestBid - 0.02);
-            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'BAILOUT').then(res => {
-                if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bestBid);
+            // Use a softer price hit; prefer bestBid, fallback to bestBid - 0.01
+            const bailoutPrice = Math.max(0.01, bestBid - 0.01);
+            // allow exits even if bid size is small (but check MIN_BID_SIZE_FOR_EXIT)
+            const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
+            executeFOK(tokenId, bailoutPrice, 'SELL', effectiveBidSize, 'BAILOUT').then(res => {
+                if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bailoutPrice);
                 else isExiting = false; 
             });
             return;
@@ -265,16 +276,17 @@ function handleMarketUpdate(data) {
         const minReasonableBid = stopLossPrice - 0.03; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
-            // NEW: Exit Spread Protection 
+            // Exit Spread Protection: now uses the loosened MAX_EXIT_SPREAD
             if (spread > MAX_EXIT_SPREAD) {
-                // The bid crashed, but the Ask is still high. Market maker just ghosted.
-                // Log it, but DO NOT sell.
+                // Previously this blocked selling; with MAX_EXIT_SPREAD increased we only avoid selling when spread is extremely wide.
                 console.log(`${colors.yellow}[SHAKEOUT AVOIDED] Bid crashed to $${bestBid.toFixed(2)} but spread is wide ($${spread.toFixed(2)}). Holding position.${colors.reset}`);
                 return; 
             }
 
             isExiting = true;
-            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'STOP LOSS').then(res => {
+            // allow exit even if bid size is small (but respect MIN_BID_SIZE_FOR_EXIT)
+            const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
+            executeFOK(tokenId, bestBid, 'SELL', effectiveBidSize, 'STOP LOSS').then(res => {
                 if (res.success) logCompletedTrade("STOP LOSS", bestBid); 
                 else isExiting = false;
             });
