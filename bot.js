@@ -90,9 +90,7 @@ console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
     // Strip ANSI colors so the text file remains clean and readable
-    const cleanMessage = message.replace(/\x1b
-
-\[[0-9;]*m/g, '');
+    const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
     // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
