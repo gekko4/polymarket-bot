@@ -47,7 +47,7 @@ const BET_SIZE_USD = 1.00;
 const TAKER_FEE_BPS = 180; 
 
 // --- PAPER TRADING STATE & STATS ---
-let trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
+let trades = { YES: null, NO: null };
 
 let stats = {
     totalTrades: 0,
@@ -62,8 +62,9 @@ let trend = { YES: 0, NO: 0 };
 let currentPrices = { YES: 0, NO: 0 }; 
 let recentTrades = []; // Keeps track of dashboard history
 
-let isExecuting = false;
-let isExiting = false; 
+let isExecuting = { YES: false, NO: false };
+let isExiting   = { YES: false, NO: false };
+let lastBook    = { YES: null, NO: null };
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
 let postTradeCooldown = 0; // Timer to prevent immediate re-entry after losses
@@ -102,11 +103,9 @@ if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
     priceStream.write("Timestamp,YES_Ask,NO_Ask\n");
 }
 
-function logCompletedTrade(exitReason, exitPrice) {
-    const isWin = exitPrice > trade.entryPrice;
-    
-    const grossReturn = exitPrice * trade.shares;
-    const entryCost = trade.entryPrice * trade.shares;
+function logCompletedTrade(t, exitReason, exitPrice) {
+    const grossReturn = exitPrice * t.shares;
+    const entryCost = t.entryPrice * t.shares;
     
     let totalFees = entryCost * (TAKER_FEE_BPS / 10000); 
     if (exitReason !== "TAKE PROFIT") {
@@ -127,8 +126,8 @@ function logCompletedTrade(exitReason, exitPrice) {
     const c = netPnL > 0 ? colors.brightYellow : colors.red;
 
     console.log(`\n${colors.gray}========================================${colors.reset}`);
-    console.log(`[TRADE CLOSED] Reason: ${c}${exitReason}${colors.reset}`);
-    console.log(`Entry: $${trade.entryPrice.toFixed(3)} | Exit: $${exitPrice.toFixed(3)}`);
+    console.log(`[TRADE CLOSED - ${t.side}] Reason: ${c}${exitReason}${colors.reset}`);
+    console.log(`Entry: $${t.entryPrice.toFixed(3)} | Exit: $${exitPrice.toFixed(3)}`);
     console.log(`Gross PnL: $${(grossReturn - entryCost).toFixed(4)} | Fees Paid: $${totalFees.toFixed(4)}`);
     console.log(`NET PnL: ${c}$${netPnL > 0 ? '+' : ''}${netPnL.toFixed(4)}${colors.reset}`);
     console.log(`${colors.gray}---${colors.reset}`);
@@ -136,44 +135,45 @@ function logCompletedTrade(exitReason, exitPrice) {
     console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
     console.log(`${colors.gray}========================================\n${colors.reset}`);
 
-    const logEntry = `${new Date().toISOString()},BTC-5M,${exitReason},${trade.entryPrice},${exitPrice},${trade.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
+    const logEntry = `${new Date().toISOString()},BTC-5M-${t.side},${exitReason},${t.entryPrice},${exitPrice},${t.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     tradeStream.write(logEntry); 
 
     // Feed the mobile dashboard
     recentTrades.unshift({ 
-        time: new Date().toLocaleTimeString(), 
+        time: new Date().toLocaleTimeString(),
+        side: t.side,
         reason: exitReason, 
-        entry: trade.entryPrice.toFixed(3), 
+        entry: t.entryPrice.toFixed(3), 
         exit: exitPrice.toFixed(3), 
         pnl: netPnL 
     });
     if (recentTrades.length > 10) recentTrades.pop();
 
-    trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
-    isExiting = false; 
+    trades[t.side] = null;
+    isExiting[t.side] = false; 
     
-    // NEW: Increased breather to 30 seconds after a loss to prevent revenge trading
     if (exitReason === "STOP LOSS") {
         postTradeCooldown = Date.now() + 30000; 
     } else {
-        postTradeCooldown = 0; // Instantly ready for the next setup if it was a win
+        postTradeCooldown = 0;
     }
 }
 
-async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
-    if (isExecuting) return false;
-    isExecuting = true;
+async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actionLog) {
+    if (isExecuting[marketSide]) return false;
+    isExecuting[marketSide] = true;
 
     try {
-        const refPrice = side === 'BUY' ? price : trade.entryPrice;
+        const t = trades[marketSide];
+        const refPrice = buySell === 'BUY' ? price : t.entryPrice;
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
         if (parseFloat(sizeNeeded) < parseFloat(shares)) {
             return false;
         }
 
-        const logColor = side === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
-        console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${side} @ $${price.toFixed(3)}...${colors.reset}`);
+        const logColor = buySell === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
+        console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${buySell} ${marketSide} @ $${price.toFixed(3)}...${colors.reset}`);
         console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
         return { success: true, sharesFilled: shares };
 
@@ -181,7 +181,7 @@ async function executeFOK(tokenId, price, side, sizeNeeded, actionLog) {
         console.error(`${colors.red}[EXECUTION ERROR]:${colors.reset}`, err.message);
         return { success: false };
     } finally {
-        isExecuting = false;
+        isExecuting[marketSide] = false;
     }
 }
 
@@ -202,6 +202,9 @@ function handleMarketUpdate(data) {
     const side = tokenId === currentYesToken ? 'YES' : (tokenId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
+    // Store live book for this side so the opposite side can read it at entry time
+    lastBook[side] = { tokenId, bestAsk, bestAskSize, bestBid, bestBidSize, ts: Date.now() };
+
     currentPrices[side] = bestAsk;
 
     // --- SINGLE-TICK MEMORY ---
@@ -217,37 +220,48 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    // Checking the postTradeCooldown lock (only affects STOP LOSS events)
-    if (!trade.active && !isExecuting && !isExiting && secondsLeft > 60 && Date.now() > postTradeCooldown) {
+    // --- ENTRY: signal fires on this side, enter BOTH sides simultaneously ---
+    if (!trades[side] && !isExecuting[side] && !isExiting[side] && secondsLeft > 60 && Date.now() > postTradeCooldown) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
         const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
 
-        // --- SINGLE-TICK AGGRESSIVE ENTRY ---
         const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
 
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
-            executeFOK(tokenId, bestAsk, 'BUY', bestAskSize, 'ENTRY').then(res => {
-                if (res.success) trade = { active: true, side: side, tokenId: tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
+
+            // Enter triggered side
+            executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
+                if (res.success) trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
             });
+
+            // Enter opposite side using its live book — only if price is fresh (within 2 seconds)
+            const oppSide  = side === 'YES' ? 'NO' : 'YES';
+            const oppToken = side === 'YES' ? currentNoToken : currentYesToken;
+            const opp = lastBook[oppSide];
+            if (opp && (Date.now() - opp.ts) < 2000 && !trades[oppSide] && !isExecuting[oppSide]) {
+                executeFOK(oppToken, opp.bestAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
+                    if (res.success) trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: opp.bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
+                });
+            }
         }
         return; 
     }
 
-    if (trade.active && trade.tokenId === tokenId && !isExecuting && !isExiting) {
+    // --- EXIT: each side watches its own price feed and exits at its own TP/SL ---
+    const t = trades[side];
+    if (t && t.tokenId === tokenId && !isExecuting[side] && !isExiting[side]) {
         
         if (secondsLeft <= 8) {
-            console.log(`\n${colors.magenta}[EXPIRATION BAILOUT] Market ending. Attempting controlled exit before resolution!${colors.reset}`);
-            isExiting = true;
-            // Use a softer price hit; prefer bestBid, fallback to bestBid - 0.01
+            console.log(`\n${colors.magenta}[EXPIRATION BAILOUT - ${side}] Market ending. Attempting controlled exit before resolution!${colors.reset}`);
+            isExiting[side] = true;
             const bailoutPrice = Math.max(0.01, bestBid - 0.01);
-            // allow exits even if bid size is small (but check MIN_BID_SIZE_FOR_EXIT)
             const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
-            executeFOK(tokenId, bailoutPrice, 'SELL', effectiveBidSize, 'BAILOUT').then(res => {
-                if (res.success) logCompletedTrade("EXPIRATION BAILOUT", bailoutPrice);
-                else isExiting = false; 
+            executeFOK(tokenId, bailoutPrice, 'SELL', side, effectiveBidSize, 'BAILOUT').then(res => {
+                if (res.success) logCompletedTrade(t, "EXPIRATION BAILOUT", bailoutPrice);
+                else isExiting[side] = false; 
             });
             return;
         }
@@ -258,15 +272,15 @@ function handleMarketUpdate(data) {
         const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
         const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
 
-        const entryFeeCost = trade.entryPrice * (TAKER_FEE_BPS / 10000);
-        const targetProfitPrice = trade.entryPrice + dynamicTP_Gap + entryFeeCost;
-        const stopLossPrice = trade.entryPrice - dynamicSL_Gap;
+        const entryFeeCost = t.entryPrice * (TAKER_FEE_BPS / 10000);
+        const targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
+        const stopLossPrice = t.entryPrice - dynamicSL_Gap;
 
         if (bestBid >= targetProfitPrice) {
-            isExiting = true;
-            executeFOK(tokenId, bestBid, 'SELL', bestBidSize, 'TAKE PROFIT').then(res => {
-                if (res.success) logCompletedTrade("TAKE PROFIT", bestBid);
-                else isExiting = false;
+            isExiting[side] = true;
+            executeFOK(tokenId, bestBid, 'SELL', side, bestBidSize, 'TAKE PROFIT').then(res => {
+                if (res.success) logCompletedTrade(t, "TAKE PROFIT", bestBid);
+                else isExiting[side] = false;
             });
             return;
         }
@@ -274,19 +288,16 @@ function handleMarketUpdate(data) {
         const minReasonableBid = stopLossPrice - 0.03; 
 
         if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
-            // Exit Spread Protection: now uses the loosened MAX_EXIT_SPREAD
             if (spread > MAX_EXIT_SPREAD) {
-                // Previously this blocked selling; with MAX_EXIT_SPREAD increased we only avoid selling when spread is extremely wide.
-                console.log(`${colors.yellow}[SHAKEOUT AVOIDED] Bid crashed to $${bestBid.toFixed(2)} but spread is wide ($${spread.toFixed(2)}). Holding position.${colors.reset}`);
+                console.log(`${colors.yellow}[SHAKEOUT AVOIDED - ${side}] Bid crashed to $${bestBid.toFixed(2)} but spread is wide ($${spread.toFixed(2)}). Holding position.${colors.reset}`);
                 return; 
             }
 
-            isExiting = true;
-            // allow exit even if bid size is small (but respect MIN_BID_SIZE_FOR_EXIT)
+            isExiting[side] = true;
             const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
-            executeFOK(tokenId, bestBid, 'SELL', effectiveBidSize, 'STOP LOSS').then(res => {
-                if (res.success) logCompletedTrade("STOP LOSS", bestBid); 
-                else isExiting = false;
+            executeFOK(tokenId, bestBid, 'SELL', side, effectiveBidSize, 'STOP LOSS').then(res => {
+                if (res.success) logCompletedTrade(t, "STOP LOSS", bestBid); 
+                else isExiting[side] = false;
             });
             return;
         }
@@ -377,7 +388,11 @@ async function loadNextMarket() {
             
             lastMidpoint = { YES: 0, NO: 0 };
             trend = { YES: 0, NO: 0 };
-            currentPrices = { YES: 0, NO: 0 }; 
+            currentPrices = { YES: 0, NO: 0 };
+            trades = { YES: null, NO: null };
+            isExecuting = { YES: false, NO: false };
+            isExiting   = { YES: false, NO: false };
+            lastBook    = { YES: null, NO: null };
 
             console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
             connectWebsocket();
@@ -398,7 +413,7 @@ const path = require('path');
 http.createServer((req, res) => {
     if (req.url === '/api/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ stats, trade, currentPrices, recentTrades }));
+        res.end(JSON.stringify({ stats, trades, currentPrices, recentTrades }));
         return;
     }
 
@@ -443,8 +458,9 @@ async function runLiveTrader() {
         }
 
         if (Math.floor(now / 1000) % 10 === 0) {
-            const statusColor = trade.active ? colors.cyan : colors.gray;
-            const status = trade.active ? `HOLDING ${trade.side} @ $${trade.entryPrice.toFixed(2)}` : 'HUNTING STRIKE VOLATILITY';
+            const activeList = ['YES','NO'].filter(s => trades[s]).map(s => `${s}@$${trades[s].entryPrice.toFixed(2)}`).join(' + ');
+            const statusColor = activeList ? colors.cyan : colors.gray;
+            const status = activeList ? `HOLDING ${activeList}` : 'HUNTING STRIKE VOLATILITY';
             console.log(`${statusColor}[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
         }
     }, 1000);
