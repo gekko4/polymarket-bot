@@ -46,6 +46,10 @@ const MAX_SL_CENTS = 0.08;
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
 
+// --- GLOBAL ABSOLUTE EXIT LEVELS (locked at entry)
+const GLOBAL_TP_PRICE = 0.713; // absolute take profit price for both sides
+const GLOBAL_SL_PRICE = 0.402; // absolute stop loss price for both sides
+
 // --- PAPER TRADING STATE & STATS ---
 let trades = { YES: null, NO: null };
 
@@ -165,7 +169,7 @@ async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actio
 
     try {
         const t = trades[marketSide];
-        const refPrice = buySell === 'BUY' ? price : t.entryPrice;
+        const refPrice = buySell === 'BUY' ? price : (t ? t.entryPrice : price);
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
         if (parseFloat(sizeNeeded) < parseFloat(shares)) {
@@ -232,9 +236,23 @@ function handleMarketUpdate(data) {
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
 
-            // Enter triggered side
+            // Enter triggered side and lock absolute TP/SL
             executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
-                if (res.success) trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
+                if (res.success) {
+                    trades[side] = { 
+                        active: true, 
+                        side, 
+                        tokenId, 
+                        entryPrice: bestAsk, 
+                        shares: res.sharesFilled, 
+                        entryTime: Date.now(), 
+                        _firstBreachTime: null, 
+                        _consecBreaches: 0,
+                        tpPrice: GLOBAL_TP_PRICE,
+                        slPrice: GLOBAL_SL_PRICE
+                    };
+                    console.log(`[ENTRY LOCK] side=${side} entry=${bestAsk.toFixed(3)} tp=${GLOBAL_TP_PRICE} sl=${GLOBAL_SL_PRICE}`);
+                }
             });
 
             // Enter opposite side using its live book — only if price is fresh (within 2 seconds)
@@ -243,14 +261,28 @@ function handleMarketUpdate(data) {
             const opp = lastBook[oppSide];
             if (opp && (Date.now() - opp.ts) < 2000 && !trades[oppSide] && !isExecuting[oppSide]) {
                 executeFOK(oppToken, opp.bestAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
-                    if (res.success) trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: opp.bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
+                    if (res.success) {
+                        trades[oppSide] = { 
+                            active: true, 
+                            side: oppSide, 
+                            tokenId: oppToken, 
+                            entryPrice: opp.bestAsk, 
+                            shares: res.sharesFilled, 
+                            entryTime: Date.now(), 
+                            _firstBreachTime: null, 
+                            _consecBreaches: 0,
+                            tpPrice: GLOBAL_TP_PRICE,
+                            slPrice: GLOBAL_SL_PRICE
+                        };
+                        console.log(`[ENTRY LOCK] side=${oppSide} entry=${opp.bestAsk.toFixed(3)} tp=${GLOBAL_TP_PRICE} sl=${GLOBAL_SL_PRICE}`);
+                    }
                 });
             }
         }
         return; 
     }
 
-    // --- EXIT: each side watches its own price feed and exits at its own TP/SL ---
+    // --- EXIT: each side watches its own price feed and exits at its own locked TP/SL ---
     const t = trades[side];
     if (t && t.tokenId === tokenId && !isExecuting[side] && !isExiting[side]) {
         
@@ -266,15 +298,9 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        const distanceToCenterBid = Math.abs(0.50 - bestBid);
-        const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
-
-        const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
-        const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
-
-        const entryFeeCost = t.entryPrice * (TAKER_FEE_BPS / 10000);
-        const targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
-        const stopLossPrice = t.entryPrice - dynamicSL_Gap;
+        // Use locked absolute TP/SL set at entry
+        const targetProfitPrice = t.tpPrice;
+        const stopLossPrice = t.slPrice;
 
         if (bestBid >= targetProfitPrice) {
             isExiting[side] = true;
