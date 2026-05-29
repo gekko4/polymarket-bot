@@ -46,10 +46,6 @@ const MAX_SL_CENTS = 0.08;
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
 
-// --- GLOBAL ABSOLUTE EXIT LEVELS (locked at entry)
-const GLOBAL_TP_PRICE = 0.713; // absolute take profit price for both sides
-const GLOBAL_SL_PRICE = 0.402; // absolute stop loss price for both sides
-
 // --- PAPER TRADING STATE & STATS ---
 let trades = { YES: null, NO: null };
 
@@ -103,8 +99,117 @@ console.log = function (...args) {
 if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
     tradeStream.write("Date,Market,Action,Entry_Price,Exit_Price,Shares,PnL_USD,Balance_USD,Win_Rate_Pct\n");
 }
-if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
-    priceStream.write("Timestamp,YES_Ask,NO_Ask\n");
+
+/**
+ * PRICE HISTORY LOGGING (WINDOWED)
+ * --------------------------------
+ * Instead of logging every second forever, we:
+ *  - keep a rolling in-memory buffer of the last PRE minutes (ring buffer)
+ *  - when ANY trade opens, we dump the PRE buffer to CSV and start live logging
+ *  - when all trades close, we continue logging for POST minutes, then stop
+ *
+ * This keeps price_history.csv small and very analysis-friendly.
+ */
+const PRICE_LOG_INTERVAL_MS = 1000; // keep 1s resolution (you can set 2000 to shrink file further)
+const PRICE_PRE_MINUTES = 2;        // minutes BEFORE entry
+const PRICE_POST_MINUTES = 2;       // minutes AFTER final exit
+const PRICE_BUFFER_MAX = Math.max(1, Math.floor((PRICE_PRE_MINUTES * 60 * 1000) / PRICE_LOG_INTERVAL_MS));
+
+let priceBuffer = [];              // holds { ts, yesAsk, noAsk }
+let priceCaptureActive = false;    // are we writing ticks to CSV right now?
+let priceCaptureUntilTs = 0;       // after-exit capture end timestamp
+let priceCaptureLastTickTs = 0;    // enforce interval
+let priceCaptureStartTs = 0;       // for informational/debug
+let pricePreBufferDumped = false;  // dump pre-buffer once per capture session
+
+function ensurePriceHeader() {
+    if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
+        // Added Phase column to make analysis easier (PRE/LIVE/POST)
+        priceStream.write("Timestamp,YES_Ask,NO_Ask,Phase\n");
+    }
+}
+ensurePriceHeader();
+
+function addToPriceBuffer(ts, yesAsk, noAsk) {
+    priceBuffer.push({ ts, yesAsk, noAsk });
+    if (priceBuffer.length > PRICE_BUFFER_MAX) priceBuffer.shift();
+}
+
+function anyTradeActive() {
+    return !!(trades.YES || trades.NO);
+}
+
+function startPriceCaptureIfNeeded() {
+    if (priceCaptureActive) return;
+
+    priceCaptureActive = true;
+    pricePreBufferDumped = false;
+    priceCaptureStartTs = Date.now();
+    priceCaptureUntilTs = 0; // reset; will be set after exit
+    console.log(`${colors.cyan}[PRICE LOG] Capture session started. Pre=${PRICE_PRE_MINUTES}m Post=${PRICE_POST_MINUTES}m Interval=${PRICE_LOG_INTERVAL_MS}ms${colors.reset}`);
+}
+
+function armPostCaptureWindow() {
+    // Called when a trade closes; we keep capturing until this time,
+    // but we only stop after ALL trades are closed.
+    priceCaptureUntilTs = Date.now() + (PRICE_POST_MINUTES * 60 * 1000);
+}
+
+function dumpPreBufferOnce() {
+    if (pricePreBufferDumped) return;
+    pricePreBufferDumped = true;
+
+    if (!priceBuffer.length) return;
+
+    // Dump buffered ticks as PRE
+    for (const row of priceBuffer) {
+        priceStream.write(`${new Date(row.ts).toISOString()},${row.yesAsk.toFixed(3)},${row.noAsk.toFixed(3)},PRE\n`);
+    }
+}
+
+function maybeLogPriceTick() {
+    const now = Date.now();
+    if (now - priceCaptureLastTickTs < PRICE_LOG_INTERVAL_MS) return;
+
+    const yes = currentPrices.YES;
+    const no  = currentPrices.NO;
+
+    if (!(yes > 0) || !(no > 0)) return;
+
+    // Always keep rolling buffer regardless of capture mode (in-memory only)
+    addToPriceBuffer(now, yes, no);
+
+    // If trade becomes active, begin capture and dump PRE buffer
+    if (anyTradeActive()) {
+        startPriceCaptureIfNeeded();
+    }
+
+    // If capturing, ensure pre is dumped and then write live/post ticks
+    if (priceCaptureActive) {
+        dumpPreBufferOnce();
+
+        // Determine phase label
+        let phase = "LIVE";
+        if (!anyTradeActive() && priceCaptureUntilTs > 0) phase = "POST";
+
+        priceStream.write(`${new Date(now).toISOString()},${yes.toFixed(3)},${no.toFixed(3)},${phase}\n`);
+        priceCaptureLastTickTs = now;
+
+        // Stop capture if we're past the post window AND no trades are active
+        if (!anyTradeActive() && priceCaptureUntilTs > 0 && now >= priceCaptureUntilTs) {
+            priceCaptureActive = false;
+            priceCaptureUntilTs = 0;
+            pricePreBufferDumped = false;
+
+            // clear buffer after session to avoid dumping stale history into next session
+            priceBuffer = [];
+
+            console.log(`${colors.gray}[PRICE LOG] Capture session ended.${colors.reset}`);
+        }
+    } else {
+        // Not capturing: still update tick timer so we don't buffer at ultra-high rate
+        priceCaptureLastTickTs = now;
+    }
 }
 
 function logCompletedTrade(t, exitReason, exitPrice) {
@@ -156,6 +261,10 @@ function logCompletedTrade(t, exitReason, exitPrice) {
     trades[t.side] = null;
     isExiting[t.side] = false; 
     
+    // Arm post-trade capture window when a trade closes.
+    // The capture will actually stop only after ALL trades are closed AND post window expires.
+    armPostCaptureWindow();
+
     if (exitReason === "STOP LOSS") {
         postTradeCooldown = Date.now() + 30000; 
     } else {
@@ -169,7 +278,7 @@ async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actio
 
     try {
         const t = trades[marketSide];
-        const refPrice = buySell === 'BUY' ? price : (t ? t.entryPrice : price);
+        const refPrice = buySell === 'BUY' ? price : t.entryPrice;
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
         if (parseFloat(sizeNeeded) < parseFloat(shares)) {
@@ -179,6 +288,12 @@ async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actio
         const logColor = buySell === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
         console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${buySell} ${marketSide} @ $${price.toFixed(3)}...${colors.reset}`);
         console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
+
+        // If we are buying (entry), start capture session right away so PRE gets dumped promptly
+        if (buySell === 'BUY') {
+            startPriceCaptureIfNeeded();
+        }
+
         return { success: true, sharesFilled: shares };
 
     } catch (err) {
@@ -236,23 +351,9 @@ function handleMarketUpdate(data) {
         if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
             console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
 
-            // Enter triggered side and lock absolute TP/SL
+            // Enter triggered side
             executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
-                if (res.success) {
-                    trades[side] = { 
-                        active: true, 
-                        side, 
-                        tokenId, 
-                        entryPrice: bestAsk, 
-                        shares: res.sharesFilled, 
-                        entryTime: Date.now(), 
-                        _firstBreachTime: null, 
-                        _consecBreaches: 0,
-                        tpPrice: GLOBAL_TP_PRICE,
-                        slPrice: GLOBAL_SL_PRICE
-                    };
-                    console.log(`[ENTRY LOCK] side=${side} entry=${bestAsk.toFixed(3)} tp=${GLOBAL_TP_PRICE} sl=${GLOBAL_SL_PRICE}`);
-                }
+                if (res.success) trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
             });
 
             // Enter opposite side using its live book — only if price is fresh (within 2 seconds)
@@ -261,28 +362,14 @@ function handleMarketUpdate(data) {
             const opp = lastBook[oppSide];
             if (opp && (Date.now() - opp.ts) < 2000 && !trades[oppSide] && !isExecuting[oppSide]) {
                 executeFOK(oppToken, opp.bestAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
-                    if (res.success) {
-                        trades[oppSide] = { 
-                            active: true, 
-                            side: oppSide, 
-                            tokenId: oppToken, 
-                            entryPrice: opp.bestAsk, 
-                            shares: res.sharesFilled, 
-                            entryTime: Date.now(), 
-                            _firstBreachTime: null, 
-                            _consecBreaches: 0,
-                            tpPrice: GLOBAL_TP_PRICE,
-                            slPrice: GLOBAL_SL_PRICE
-                        };
-                        console.log(`[ENTRY LOCK] side=${oppSide} entry=${opp.bestAsk.toFixed(3)} tp=${GLOBAL_TP_PRICE} sl=${GLOBAL_SL_PRICE}`);
-                    }
+                    if (res.success) trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: opp.bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
                 });
             }
         }
         return; 
     }
 
-    // --- EXIT: each side watches its own price feed and exits at its own locked TP/SL ---
+    // --- EXIT: each side watches its own price feed and exits at its own TP/SL ---
     const t = trades[side];
     if (t && t.tokenId === tokenId && !isExecuting[side] && !isExiting[side]) {
         
@@ -298,9 +385,15 @@ function handleMarketUpdate(data) {
             return;
         }
 
-        // Use locked absolute TP/SL set at entry
-        const targetProfitPrice = t.tpPrice;
-        const stopLossPrice = t.slPrice;
+        const distanceToCenterBid = Math.abs(0.50 - bestBid);
+        const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
+
+        const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
+        const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
+
+        const entryFeeCost = t.entryPrice * (TAKER_FEE_BPS / 10000);
+        const targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
+        const stopLossPrice = t.entryPrice - dynamicSL_Gap;
 
         if (bestBid >= targetProfitPrice) {
             isExiting[side] = true;
@@ -479,9 +572,8 @@ async function runLiveTrader() {
         const now = Date.now();
         if (now >= marketEndTime && !isSearchingNextMarket) loadNextMarket();
 
-        if (currentPrices.YES > 0 && currentPrices.NO > 0) {
-            priceStream.write(`${new Date().toISOString()},${currentPrices.YES.toFixed(3)},${currentPrices.NO.toFixed(3)}\n`);
-        }
+        // Windowed price logging (instead of writing every second forever)
+        maybeLogPriceTick();
 
         if (Math.floor(now / 1000) % 10 === 0) {
             const activeList = ['YES','NO'].filter(s => trades[s]).map(s => `${s}@$${trades[s].entryPrice.toFixed(2)}`).join(' + ');
@@ -489,7 +581,7 @@ async function runLiveTrader() {
             const status = activeList ? `HOLDING ${activeList}` : 'HUNTING STRIKE VOLATILITY';
             console.log(`${statusColor}[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
         }
-    }, 1000);
+    }, 250);
 }
 
 runLiveTrader().catch(console.error);
