@@ -368,25 +368,37 @@
                 document.getElementById('winrate-details').innerText = data.stats.wins + 'W / ' + data.stats.losses + 'L';
                 document.getElementById('total-trades').innerText = data.stats.totalTrades;
 
-                // Update Status & Prices
+                // Update Status & Prices (FIXED: supports trades.YES and trades.NO)
                 const statusEl = document.getElementById('status');
                 const pulseEl = document.getElementById('pulse-indicator');
-                
-                if (data.trade.active) {
+
+                const yesTrade = data.trades?.YES || null;
+                const noTrade  = data.trades?.NO  || null;
+
+                const activeTrades = [];
+                if (yesTrade) activeTrades.push(yesTrade);
+                if (noTrade)  activeTrades.push(noTrade);
+
+                if (activeTrades.length > 0) {
                     pulseEl.className = 'pulse active';
-                    const entryCents = Math.round(data.trade.entryPrice * 100);
-                    // Standard inline cyan for holding status
-                    statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> <span style="color:var(--text-muted);font-weight:400;margin-left:8px;">@ ' + entryCents + '¢</span>';
-                    statusEl.className = ''; 
+
+                    const parts = activeTrades.map(t => {
+                        const entryCents = Math.round(t.entryPrice * 100);
+                        const sideColorClass = (t.side === 'YES') ? 'cyan' : 'gold-gradient-text';
+                        return `<span class="${sideColorClass}">${t.side}</span> <span style="color:var(--text-muted);font-weight:400;">@ ${entryCents}¢</span>`;
+                    });
+
+                    statusEl.innerHTML =
+                        `<span class="cyan">HOLDING</span> <span style="margin-left:8px;">${parts.join(' <span style="color:var(--text-muted)"> + </span> ')}</span>`;
+                    statusEl.className = '';
                 } else {
                     pulseEl.className = 'pulse';
-                    // Re-apply gold gradient class for awaiting state
                     statusEl.innerHTML = 'AWAITING SIGNAL';
                     statusEl.className = 'gold-gradient-text';
                 }
 
-                document.getElementById('yes-price').innerText = Math.round(data.currentPrices.YES * 100) + '¢';
-                document.getElementById('no-price').innerText = Math.round(data.currentPrices.NO * 100) + '¢';
+                document.getElementById('yes-price').innerText = Math.round((data.currentPrices?.YES || 0) * 100) + '¢';
+                document.getElementById('no-price').innerText  = Math.round((data.currentPrices?.NO  || 0) * 100) + '¢';
 
                 // Update History
                 if (data.recentTrades && data.recentTrades.length > 0) {
@@ -399,10 +411,10 @@
                         const exitCents = Math.round(parseFloat(t.exit) * 100);
 
                         let reasonColor = 'var(--accent-cyan)';
-                        const reasonUpper = t.reason.toUpperCase();
+                        const reasonUpper = (t.reason || '').toUpperCase();
                         if (reasonUpper.includes('BUY') || reasonUpper.includes('PROFIT') || reasonUpper.includes('ENTRY')) {
                             reasonColor = 'var(--accent-green)';
-                        } else if (reasonUpper.includes('SELL') || reasonUpper.includes('LOSS') || reasonUpper.includes('STOP') || reasonUpper.includes('EXIT')) {
+                        } else if (reasonUpper.includes('SELL') || reasonUpper.includes('LOSS') || reasonUpper.includes('STOP') || reasonUpper.includes('EXIT') || reasonUpper.includes('BAILOUT')) {
                             reasonColor = 'var(--accent-red)';
                         }
 
