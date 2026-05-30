@@ -46,6 +46,12 @@ const MAX_SL_CENTS = 0.08;
 const BET_SIZE_USD = 1.00;   
 const TAKER_FEE_BPS = 180; 
 
+// --- PAIR CONTROL FLAGS & CENTER BAND (NEW) ---
+let pairClosing = false; // blocks new entries while pair close runs
+const CENTER_MIN = 0.49;
+const CENTER_MAX = 0.51;
+const DESIRED_NET_PROFIT_USD = 0.01; // G: desired small profit after covering loss
+
 // --- PAPER TRADING STATE & STATS ---
 let trades = { YES: null, NO: null };
 
@@ -91,7 +97,9 @@ console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
     // Strip ANSI colors so the text file remains clean and readable
-    const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
+    const cleanMessage = message.replace(/\x1b
+
+\[[0-9;]*m/g, '');
     // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
@@ -258,6 +266,56 @@ function logCompletedTrade(t, exitReason, exitPrice) {
     });
     if (recentTrades.length > 10) recentTrades.pop();
 
+    // --- PAIR CLOSE / SURVIVOR PRICE LOGIC ---
+    const otherSide = t.side === 'YES' ? 'NO' : 'YES';
+    const otherTrade = trades[otherSide];
+
+    // If TAKE PROFIT happened, immediately close the other side (pair close)
+    if (exitReason === "TAKE PROFIT" && otherTrade) {
+        console.log(`${colors.cyan}[PAIR CLOSE] ${otherSide} will be closed immediately to lock net result.${colors.reset}`);
+        pairClosing = true;
+        isExiting[otherSide] = true;
+        const marketPrice = Math.max(0.01, currentPrices[otherSide] - 0.01);
+        const effectiveBidSize = Math.max(otherTrade.shares, MIN_BID_SIZE_FOR_EXIT);
+        executeFOK(otherTrade.tokenId, marketPrice, 'SELL', otherSide, effectiveBidSize, 'PAIR CLOSE').then(res => {
+            pairClosing = false;
+            if (res.success) {
+                // logCompletedTrade will be called by that execution's success path
+            } else {
+                isExiting[otherSide] = false;
+            }
+        });
+    }
+
+    // If STOP LOSS happened, compute required survivor exit price and set it on the survivor
+    if (exitReason === "STOP LOSS" && otherTrade) {
+        const feeRateDecimal = TAKER_FEE_BPS / 10000;
+        // losing trade details
+        const losingTrade = { entryPrice: t.entryPrice, exitPrice: exitPrice, shares: t.shares };
+        const survivorTrade = { entryPrice: otherTrade.entryPrice, shares: otherTrade.shares };
+
+        // compute L_needed = -grossLoss + fees on losing trade
+        const grossLoss = (losingTrade.exitPrice - losingTrade.entryPrice) * losingTrade.shares; // negative
+        const feesLosing = feeRateDecimal * (losingTrade.entryPrice + losingTrade.exitPrice) * losingTrade.shares;
+        const L_needed = -grossLoss + feesLosing;
+        const R = L_needed + DESIRED_NET_PROFIT_USD;
+
+        // Avoid division by zero
+        if (survivorTrade.shares > 0) {
+            const numerator = (R / survivorTrade.shares) + (survivorTrade.entryPrice * (1 + feeRateDecimal));
+            const denom = (1 - feeRateDecimal);
+            const requiredPrice = numerator / denom;
+            otherTrade.requiredExitPrice = requiredPrice;
+            console.log(`${colors.yellow}[REQUIRED SURVIVOR PRICE] ${otherSide} must reach $${requiredPrice.toFixed(3)} to cover loss + fees + profit.${colors.reset}`);
+        } else {
+            console.log(`${colors.yellow}[REQUIRED SURVIVOR PRICE] Could not compute required price for ${otherSide} (zero shares).${colors.reset}`);
+        }
+
+        // set a short cooldown after a stop loss
+        postTradeCooldown = Date.now() + 45000; // 45s
+    }
+
+    // Clear the closed trade
     trades[t.side] = null;
     isExiting[t.side] = false; 
     
@@ -278,7 +336,7 @@ async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actio
 
     try {
         const t = trades[marketSide];
-        const refPrice = buySell === 'BUY' ? price : t.entryPrice;
+        const refPrice = buySell === 'BUY' ? price : (t ? t.entryPrice : price);
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
         if (parseFloat(sizeNeeded) < parseFloat(shares)) {
@@ -339,34 +397,49 @@ function handleMarketUpdate(data) {
         return; 
     }
 
-    // --- ENTRY: signal fires on this side, enter BOTH sides simultaneously ---
+    // --- ENTRY: require both sides near center and buy $1 on each side (no dynamic sizing) ---
+    if (pairClosing) return; // block new entries while pair close is running
+
     if (!trades[side] && !isExecuting[side] && !isExiting[side] && secondsLeft > 60 && Date.now() > postTradeCooldown) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
-        const distanceToCenterAsk = Math.abs(0.50 - bestAsk);
-        const volatilityMultiplierAsk = 1 - (distanceToCenterAsk / 0.50);
+        // require triggered side ask to be inside center band
+        if (!(bestAsk >= CENTER_MIN && bestAsk <= CENTER_MAX)) return;
 
-        const isTrendingCorrectly = trend[side] > 0 && trend[side] < 0.05;
+        // require opposite book exists and its ask also inside center band
+        const oppSide  = side === 'YES' ? 'NO' : 'YES';
+        const opp = lastBook[oppSide];
+        if (!opp) return;
 
-        if (volatilityMultiplierAsk >= ENTRY_VOLATILITY_THRESHOLD && isTrendingCorrectly && bestAsk <= 0.50) {
-            console.log(`\n${colors.cyan}[VOLATILITY SPIKE] Multiplier at ${volatilityMultiplierAsk.toFixed(2)} | Ask: $${bestAsk.toFixed(2)} | Spread: $${spread.toFixed(2)}${colors.reset}`);
-
-            // Enter triggered side
-            executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
-                if (res.success) trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
-            });
-
-            // Enter opposite side using its live book — only if price is fresh (within 2 seconds)
-            const oppSide  = side === 'YES' ? 'NO' : 'YES';
-            const oppToken = side === 'YES' ? currentNoToken : currentYesToken;
-            const opp = lastBook[oppSide];
-            if (opp && (Date.now() - opp.ts) < 2000 && !trades[oppSide] && !isExecuting[oppSide]) {
-                executeFOK(oppToken, opp.bestAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
-                    if (res.success) trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: opp.bestAsk, shares: res.sharesFilled, entryTime: Date.now(), _firstBreachTime: null, _consecBreaches: 0 };
-                });
-            }
+        const oppAsk = opp.bestAsk;
+        if (!(oppAsk >= CENTER_MIN && oppAsk <= CENTER_MAX)) {
+            // opposite not near center — skip entry
+            return;
         }
-        return; 
+
+        // Both sides are near center. Enter BOTH sides with $1 each.
+        // Compute shares = $1 / ask (paper fill).
+        const sharesThis = parseFloat((BET_SIZE_USD / bestAsk).toFixed(2));
+        const sharesOpp  = parseFloat((BET_SIZE_USD / oppAsk).toFixed(2));
+
+        // Enter triggered side
+        executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
+            if (res.success) {
+                trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: sharesThis, entryTime: Date.now(), requiredExitPrice: null };
+            }
+        });
+
+        // Enter opposite side using its last seen ask (paper fill)
+        const oppToken = side === 'YES' ? currentNoToken : currentYesToken;
+        if (!trades[oppSide] && !isExecuting[oppSide]) {
+            executeFOK(oppToken, oppAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
+                if (res.success) {
+                    trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: oppAsk, shares: sharesOpp, entryTime: Date.now(), requiredExitPrice: null };
+                }
+            });
+        }
+
+        return;
     }
 
     // --- EXIT: each side watches its own price feed and exits at its own TP/SL ---
@@ -392,8 +465,14 @@ function handleMarketUpdate(data) {
         const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
 
         const entryFeeCost = t.entryPrice * (TAKER_FEE_BPS / 10000);
-        const targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
+        let targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
         const stopLossPrice = t.entryPrice - dynamicSL_Gap;
+
+        // If a requiredExitPrice was set (because the other side lost), require that price instead
+        if (t.requiredExitPrice && isFinite(t.requiredExitPrice)) {
+            // ensure we aim for at least the required price
+            targetProfitPrice = Math.max(targetProfitPrice, t.requiredExitPrice);
+        }
 
         if (bestBid >= targetProfitPrice) {
             isExiting[side] = true;
