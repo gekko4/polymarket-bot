@@ -398,7 +398,7 @@ function handleMarketUpdate(data) {
     // --- ENTRY: require both sides near center and buy $1 on each side (no dynamic sizing) ---
     if (pairClosing) return; // block new entries while pair close is running
 
-    if (!trades[side] && !isExecuting[side] && !isExiting[side] && secondsLeft > 60 && Date.now() > postTradeCooldown) {
+    if (!trades['YES'] && !trades['NO'] && !isExecuting[side] && !isExiting[side] && secondsLeft > 60 && Date.now() > postTradeCooldown) {
         if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
 
         // require triggered side ask to be inside center band
@@ -466,10 +466,9 @@ function handleMarketUpdate(data) {
         let targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
         const stopLossPrice = t.entryPrice - dynamicSL_Gap;
 
-        // If a requiredExitPrice was set (because the other side lost), require that price instead
+        // If a requiredExitPrice was set (because the other side lost), use exactly that — no greed
         if (t.requiredExitPrice && isFinite(t.requiredExitPrice)) {
-            // ensure we aim for at least the required price
-            targetProfitPrice = Math.max(targetProfitPrice, t.requiredExitPrice);
+            targetProfitPrice = t.requiredExitPrice;
         }
 
         if (bestBid >= targetProfitPrice) {
