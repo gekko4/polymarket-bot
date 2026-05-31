@@ -39,7 +39,7 @@ const MIN_BID_SIZE_FOR_EXIT = 0.15; // Allow exits into thinner bids during cras
 
 // Wider TP to let winners run; SL kept conservative
 const MIN_TP_CENTS = 0.06;       // Raised base TP to 6 cents
-const MAX_TP_CENTS = 0.24;       // Let winners run up to 18 cents in high volatility
+const MAX_TP_CENTS = 0.20;       // Let winners run up to 20 cents in high volatility
 const MIN_SL_CENTS = 0.03; 
 const MAX_SL_CENTS = 0.08; 
 
