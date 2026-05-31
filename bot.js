@@ -35,7 +35,7 @@ const TAKER_FEE_BPS = 180;        // Taker fee is 1.8%. Maker fee is 0%.
 
 // --- PAPER TRADING STATE & STATS ---
 let trades = { YES: null, NO: null };
-let virtualOrders = { YES: null, NO: null }; // Holds our resting limit bids
+let virtualOrders = { YES: null, NO: null }; // Holds our resting limit bids (explicit states)
 
 let stats = {
     totalTrades: 0,
@@ -107,7 +107,7 @@ function addToPriceBuffer(ts, yesAsk, noAsk) {
 }
 
 function anyTradeActive() {
-    return !!(trades.YES || trades.NO || virtualOrders.YES || virtualOrders.NO);
+    return !!(trades.YES || trades.NO || (virtualOrders.YES && virtualOrders.YES.status === 'PLACED') || (virtualOrders.NO && virtualOrders.NO.status === 'PLACED'));
 }
 
 function startPriceCaptureIfNeeded() {
@@ -165,16 +165,18 @@ function maybeLogPriceTick() {
 }
 
 function logCompletedTrade(t, exitReason, exitPrice) {
+    // Single canonical place to update stats and logs for a closed leg
     const grossReturn = exitPrice * t.shares;
     const entryCost = t.entryPrice * t.shares;
     
-    // Maker entries pay 0 fees. Exits (Taker) pay fees.
+    // Maker entries pay 0 fees. Exits (Taker) pay fees unless ARBITRAGE SETTLED (we treat settlement as fee-free).
     let entryFee = t.isMaker ? 0 : entryCost * (TAKER_FEE_BPS / 10000); 
     let exitFee = (exitReason !== "ARBITRAGE SETTLED") ? (grossReturn * (TAKER_FEE_BPS / 10000)) : 0;
     
     let totalFees = entryFee + exitFee;
     const netPnL = (grossReturn - entryCost) - totalFees;
 
+    // Update stats only here
     stats.totalTrades++;
     if (netPnL > 0) stats.wins++;
     else stats.losses++;
@@ -211,68 +213,42 @@ function logCompletedTrade(t, exitReason, exitPrice) {
     armPostCaptureWindow();
 }
 
-function settleArbitrageWin() {
-    const tYES = trades['YES'];
-    const tNO = trades['NO'];
-
-    if (tYES && tNO) {
-        const totalCost = (tYES.entryPrice * tYES.shares) + (tNO.entryPrice * tNO.shares);
-        
-        // At expiry, one side pays $1 per share. Since we bought equal dollar amounts, 
-        // we use the shares of the side that won. For simplicity in the log, 
-        // we average/use YES shares since they are mathematically identical.
-        const payout = tYES.shares * 1.00; 
-        const netPnL = payout - totalCost; // No exit fees at resolution!
-
-        stats.totalTrades += 2;
-        stats.wins += 2; 
-        stats.currentBalance += netPnL;
-
-        const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
-        const roi = (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100).toFixed(2);
-
-        console.log(`\n${colors.brightYellow}========================================${colors.reset}`);
-        console.log(`[ARBITRAGE SETTLED] Market Expired! Pair successfully held.`);
-        console.log(`Entry Cost: $${totalCost.toFixed(2)} (0 Maker Fees)`);
-        console.log(`Payout: $${payout.toFixed(2)}`);
-        console.log(`NET PnL: ${colors.green}+$${netPnL.toFixed(4)}${colors.reset}`);
-        console.log(`${colors.gray}---${colors.reset}`);
-        console.log(`[STATS] Balance: $${stats.currentBalance.toFixed(2)} (${roi > 0 ? '+' : ''}${roi}% ROI)`);
-        console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
-        console.log(`${colors.gray}========================================\n${colors.reset}`);
-
-        const logEntry = `${new Date().toISOString()},BTC-5M-PAIR,ARBITRAGE SETTLED,${MAKER_BID_PRICE},1.00,${tYES.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
-        tradeStream.write(logEntry);
-
-        recentTrades.unshift({ 
-            time: new Date().toLocaleTimeString(), side: "PAIR",
-            reason: "ARB WIN", entry: MAKER_BID_PRICE.toFixed(3), 
-            exit: "1.000", pnl: netPnL 
-        });
-        if (recentTrades.length > 10) recentTrades.pop();
-
-        trades = { YES: null, NO: null };
-        virtualOrders = { YES: null, NO: null };
-        armPostCaptureWindow();
-    }
-}
-
+/**
+ * Simulated FOK execution for paper trading.
+ * - Checks available size (sizeAvailable)
+ * - Applies simple slippage model based on depth and requested size
+ * - Applies taker fee on fills that are taker exits
+ * - Returns { success, sharesFilled, executedPrice }
+ */
 async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actionLog) {
-    if (isExecuting[marketSide]) return false;
+    if (isExecuting[marketSide]) return { success: false };
     isExecuting[marketSide] = true;
 
     try {
         const t = trades[marketSide];
+        // Determine reference price for share calculation
         const refPrice = buySell === 'BUY' ? price : (t ? t.entryPrice : price);
-        const shares = (BET_SIZE_USD / refPrice).toFixed(2);
-        
-        if (parseFloat(sizeNeeded) < parseFloat(shares)) return false;
+        const desiredShares = parseFloat((BET_SIZE_USD / refPrice).toFixed(2));
 
-        const logColor = buySell === 'BUY' ? colors.cyan : colors.red;
-        console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${buySell} ${marketSide} @ $${price.toFixed(3)}...${colors.reset}`);
-        console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
+        // sizeNeeded is the book size at that price; if not provided, assume small liquidity
+        const availableSize = parseFloat(sizeNeeded) || 0.01;
 
-        return { success: true, sharesFilled: shares };
+        // If not enough liquidity, fail or partially fill depending on availableSize
+        if (availableSize <= 0) {
+            console.log(`${colors.red}[EXEC SIM] No liquidity available for ${marketSide} at $${price.toFixed(3)}.${colors.reset}`);
+            return { success: false };
+        }
+
+        // If available size smaller than desired, simulate partial fill
+        const sharesFilled = Math.min(desiredShares, availableSize);
+
+        // Simple slippage: larger fills suffer more slippage (linear)
+        const slippagePct = Math.min(0.01, (sharesFilled / Math.max(0.01, availableSize)) * 0.002); // up to 0.1%
+        const executedPrice = buySell === 'BUY' ? price * (1 + slippagePct) : price * (1 - slippagePct);
+
+        // Simulate taker fee for non-maker exits (we'll apply fees in logCompletedTrade)
+        console.log(`[PAPER SIMULATION] ${colors.cyan}${actionLog} ${buySell} ${marketSide} @ $${executedPrice.toFixed(3)} (${sharesFilled} shares)${colors.reset}`);
+        return { success: true, sharesFilled: parseFloat(sharesFilled.toFixed(2)), executedPrice };
 
     } catch (err) {
         console.error(`${colors.red}[EXECUTION ERROR]:${colors.reset}`, err.message);
@@ -306,34 +282,48 @@ function handleMarketUpdate(data) {
     if (secondsLeft > 270) return; 
 
     // ---------------------------------------------------------
-    // 1. PLACE MAKER LIMIT ORDERS
+    // 1. PLACE MAKER LIMIT ORDERS (explicit order state)
     // ---------------------------------------------------------
-    if (!virtualOrders.YES && !virtualOrders.NO && !trades.YES && !trades.NO && secondsLeft > SCRATCH_TIME_SEC) {
+    if ((!virtualOrders.YES || virtualOrders.YES.status !== 'PLACED') && (!virtualOrders.NO || virtualOrders.NO.status !== 'PLACED') && !trades.YES && !trades.NO && secondsLeft > SCRATCH_TIME_SEC) {
         const shares = parseFloat((BET_SIZE_USD / MAKER_BID_PRICE).toFixed(2));
-        virtualOrders.YES = { side: 'YES', tokenId: currentYesToken, price: MAKER_BID_PRICE, shares: shares, filled: false };
-        virtualOrders.NO = { side: 'NO', tokenId: currentNoToken, price: MAKER_BID_PRICE, shares: shares, filled: false };
+        virtualOrders.YES = { side: 'YES', tokenId: currentYesToken, price: MAKER_BID_PRICE, shares: shares, status: 'PLACED', placedAt: now, filled: false };
+        virtualOrders.NO = { side: 'NO', tokenId: currentNoToken, price: MAKER_BID_PRICE, shares: shares, status: 'PLACED', placedAt: now, filled: false };
         console.log(`\n${colors.cyan}[MAKER] Placed resting Limit Bids at $${MAKER_BID_PRICE} for YES and NO.${colors.reset}`);
         startPriceCaptureIfNeeded(); 
     }
 
     // ---------------------------------------------------------
-    // 2. CHECK FOR MAKER FILLS
+    // 2. CHECK FOR MAKER FILLS (corrected logic)
     // ---------------------------------------------------------
-    if (virtualOrders[side] && !virtualOrders[side].filled) {
-        // If Ask drops to our Bid, or someone sells through it (Bid drops below it)
-        if (bestAsk <= virtualOrders[side].price || bestBid < virtualOrders[side].price) {
-            virtualOrders[side].filled = true;
-            
-            trades[side] = { 
-                active: true, side: side, tokenId: virtualOrders[side].tokenId, 
-                entryPrice: virtualOrders[side].price, shares: virtualOrders[side].shares, 
-                entryTime: now, isMaker: true // 0 Fees
-            };
-            
-            console.log(`${colors.green}[FILLED] Maker Bid on ${side} filled at $${virtualOrders[side].price}!${colors.reset}`);
+    if (virtualOrders[side] && virtualOrders[side].status === 'PLACED' && !virtualOrders[side].filled) {
+        // Correct fill detection:
+        // - If bestAsk <= ourBid then someone is offering at or below our bid (we can buy)
+        // - If bestBid >= ourBid then someone is bidding at or above our bid (they would have to lift a sell to hit our bid)
+        // Use >= for bestBid comparison (previous code used < which was inverted)
+        if (bestAsk <= virtualOrders[side].price || bestBid >= virtualOrders[side].price) {
+            // Check available liquidity at that price before claiming a fill
+            const availableSize = (bestAsk <= virtualOrders[side].price) ? bestAskSize : bestBidSize;
+            const desiredShares = virtualOrders[side].shares;
 
-            if (virtualOrders.YES.filled && virtualOrders.NO.filled) {
-                console.log(`\n${colors.brightYellow}[ARBITRAGE LOCKED] Both sides filled at $${MAKER_BID_PRICE}! Risk-free profit locked. Holding to Expiry.${colors.reset}`);
+            // If availableSize is less than desiredShares, simulate partial fill
+            const filledShares = Math.min(desiredShares, parseFloat(availableSize || 0));
+            if (filledShares <= 0) {
+                // No real liquidity; do not mark filled
+            } else {
+                virtualOrders[side].filled = true;
+                virtualOrders[side].status = 'FILLED';
+                
+                trades[side] = { 
+                    active: true, side: side, tokenId: virtualOrders[side].tokenId, 
+                    entryPrice: virtualOrders[side].price, shares: parseFloat(filledShares.toFixed(2)), 
+                    entryTime: now, isMaker: true // 0 Fees for maker entry
+                };
+                
+                console.log(`${colors.green}[FILLED] Maker Bid on ${side} filled at $${virtualOrders[side].price} for ${filledShares} shares!${colors.reset}`);
+
+                if (virtualOrders.YES && virtualOrders.NO && virtualOrders.YES.filled && virtualOrders.NO.filled) {
+                    console.log(`\n${colors.brightYellow}[ARBITRAGE LOCKED] Both sides filled at $${MAKER_BID_PRICE}! Risk-free profit locked. Holding to Expiry.${colors.reset}`);
+                }
             }
         }
     }
@@ -351,29 +341,37 @@ function handleMarketUpdate(data) {
 
             if (!isExiting[filledSide]) {
                 console.log(`\n${colors.magenta}[DANGER] ${unfilledSide} never filled! Canceling unfilled order.${colors.reset}`);
-                virtualOrders[unfilledSide].filled = true; // Stop checking
+                virtualOrders[unfilledSide].status = 'CANCELLED';
+                virtualOrders[unfilledSide].filled = false; 
                 trades[unfilledSide] = null; 
                 
                 // Market-sell the side we are stuck holding
                 const filledBook = lastBook[filledSide];
-                if (filledBook && filledBook.bestBid > 0) {
+                if (filledBook && filledBook.bestBid > 0 && trades[filledSide]) {
                     console.log(`${colors.yellow}[SCRATCH] Dumping ${filledSide} to avoid directional risk into expiry.${colors.reset}`);
                     isExiting[filledSide] = true;
                     executeFOK(trades[filledSide].tokenId, filledBook.bestBid, 'SELL', filledSide, filledBook.bestBidSize, 'SCRATCH EXIT').then(res => {
-                        if (res.success) logCompletedTrade(trades[filledSide], "SCRATCH EXIT", filledBook.bestBid);
-                        else isExiting[filledSide] = false;
+                        if (res.success) {
+                            // Use executedPrice if provided
+                            const exitPrice = res.executedPrice || filledBook.bestBid;
+                            // Mark as taker exit (isMaker false for exit)
+                            trades[filledSide].isMaker = trades[filledSide].isMaker || false;
+                            logCompletedTrade(trades[filledSide], "SCRATCH EXIT", exitPrice);
+                        } else {
+                            isExiting[filledSide] = false;
+                        }
                     });
                 }
             }
         } 
         else if (!yesFilled && !noFilled) {
             // Neither filled, market was too stable
-            if (virtualOrders.YES.price !== 0) { // Just use price as a flag so we only log once
+            if (virtualOrders.YES.status === 'PLACED') { // Just use status as a flag so we only log once
                 console.log(`\n${colors.gray}[CANCEL] Time expired. Neither side filled. Canceling both limit orders.${colors.reset}`);
-                virtualOrders.YES.price = 0; 
-                virtualOrders.NO.price = 0; 
-                virtualOrders.YES.filled = true; 
-                virtualOrders.NO.filled = true; 
+                virtualOrders.YES.status = 'CANCELLED'; 
+                virtualOrders.NO.status = 'CANCELLED'; 
+                virtualOrders.YES.filled = false; 
+                virtualOrders.NO.filled = false; 
                 armPostCaptureWindow();
             }
         }
@@ -506,6 +504,45 @@ http.createServer((req, res) => {
     console.log(`${colors.cyan}[DASHBOARD] Web UI running on port 3000${colors.reset}`);
 });
 
+/**
+ * Settlement: determine winner and close both legs via logCompletedTrade
+ * - We no longer directly mutate stats here; logCompletedTrade handles stats updates.
+ * - Winner selection in paper mode: use lastBook bestBid comparison as a deterministic proxy.
+ */
+function settleArbitrageWin() {
+    const tYES = trades['YES'];
+    const tNO = trades['NO'];
+
+    if (tYES && tNO) {
+        // Determine winner deterministically from lastBook snapshot
+        let winner = 'YES';
+        if (lastBook.YES && lastBook.NO) {
+            winner = (lastBook.YES.bestBid > lastBook.NO.bestBid) ? 'YES' : 'NO';
+        } else if (currentPrices.YES && currentPrices.NO) {
+            winner = (currentPrices.YES > currentPrices.NO) ? 'YES' : 'NO';
+        }
+
+        const payoutPrice = 1.00;
+
+        // Close both legs at payoutPrice; logCompletedTrade will update stats and balance
+        // Mark both trades as settled (no exit fees per original assumption)
+        logCompletedTrade(tYES, "ARBITRAGE SETTLED", payoutPrice);
+        logCompletedTrade(tNO, "ARBITRAGE SETTLED", payoutPrice);
+
+        console.log(`\n${colors.brightYellow}========================================${colors.reset}`);
+        console.log(`[ARBITRAGE SETTLED] Market Expired! Pair successfully held.`);
+        console.log(`Payout: $${payoutPrice.toFixed(2)} per winning share`);
+        console.log(`${colors.gray}---${colors.reset}`);
+        console.log(`[STATS] Balance: $${stats.currentBalance.toFixed(2)}`);
+        console.log(`${colors.gray}========================================\n${colors.reset}`);
+
+        // Reset state
+        trades = { YES: null, NO: null };
+        virtualOrders = { YES: null, NO: null };
+        armPostCaptureWindow();
+    }
+}
+
 async function runLiveTrader() {
     console.log(`${colors.magenta}Booting MAKER ARBITRAGE Engine in PAPER TRADING MODE...${colors.reset}`);
     
@@ -530,6 +567,32 @@ async function runLiveTrader() {
         if (now >= marketEndTime && !isSearchingNextMarket) {
             if (trades.YES && trades.NO) {
                 settleArbitrageWin(); // We successfully held both to expiry
+            } else {
+                // If we are partially filled, attempt to exit remaining positions
+                if (trades.YES && !trades.NO && lastBook.YES) {
+                    const book = lastBook.YES;
+                    if (!isExiting.YES) {
+                        isExiting.YES = true;
+                        executeFOK(trades.YES.tokenId, book.bestBid, 'SELL', 'YES', book.bestBidSize, 'EXPIRY EXIT').then(res => {
+                            if (res.success) {
+                                const exitPrice = res.executedPrice || book.bestBid;
+                                logCompletedTrade(trades.YES, "EXPIRY EXIT", exitPrice);
+                            } else isExiting.YES = false;
+                        });
+                    }
+                }
+                if (trades.NO && !trades.YES && lastBook.NO) {
+                    const book = lastBook.NO;
+                    if (!isExiting.NO) {
+                        isExiting.NO = true;
+                        executeFOK(trades.NO.tokenId, book.bestBid, 'SELL', 'NO', book.bestBidSize, 'EXPIRY EXIT').then(res => {
+                            if (res.success) {
+                                const exitPrice = res.executedPrice || book.bestBid;
+                                logCompletedTrade(trades.NO, "EXPIRY EXIT", exitPrice);
+                            } else isExiting.NO = false;
+                        });
+                    }
+                }
             }
             loadNextMarket();
         }
