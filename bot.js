@@ -13,7 +13,7 @@ const colors = {
     green: "\x1b[32m",
     red: "\x1b[31m",
     yellow: "\x1b[33m",
-    brightYellow: "\x1b[93m", // Striking Gold/Yellow for Parrot OS visibility
+    brightYellow: "\x1b[93m",
     cyan: "\x1b[36m",
     magenta: "\x1b[35m",
     gray: "\x1b[90m"
@@ -27,33 +27,15 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137; 
 const HOST = 'https://clob.polymarket.com';
 
-// --- STRIKE PROXIMITY CONFIG ---
-const ENTRY_VOLATILITY_THRESHOLD = 0.95; 
-const MAX_ALLOWED_SPREAD = 0.02; // Prevents entering on bad spreads
-
-// --- EXIT / BAILOUT TUNING (LOOSENED PER REQUEST) ---
-const MAX_EXIT_SPREAD = 0.08;    // Loosened from 0.04 to allow exits when MMs widen spread
-const COLLAPSE_THRESHOLD = 0.10; // Trigger panic handling earlier (not heavily used here but available)
-const COLLAPSE_WINDOW_SEC = 25;  // Wider detection window for collapse logic
-const MIN_BID_SIZE_FOR_EXIT = 0.15; // Allow exits into thinner bids during crash
-
-// Wider TP to let winners run; SL kept conservative
-const MIN_TP_CENTS = 0.06;       // Raised base TP to 6 cents
-const MAX_TP_CENTS = 0.24;       // Let winners run up to 18 cents in high volatility
-const MIN_SL_CENTS = 0.03; 
-const MAX_SL_CENTS = 0.08; 
-
-const BET_SIZE_USD = 1.00;   
-const TAKER_FEE_BPS = 180; 
-
-// --- PAIR CONTROL FLAGS & CENTER BAND (NEW) ---
-let pairClosing = false; // blocks new entries while pair close runs
-const CENTER_MIN = 0.49;
-const CENTER_MAX = 0.51;
-const DESIRED_NET_PROFIT_USD = 0.01; // G: desired small profit after covering loss
+// --- MAKER ARBITRAGE CONFIG ---
+const MAKER_BID_PRICE = 0.48;     // Discounted limit bids (must be < 0.50 to make profit)
+const SCRATCH_TIME_SEC = 60;      // Cancel unfilled orders and dump single legs at 60s remaining
+const BET_SIZE_USD = 1.00;        // Dollar size per leg
+const TAKER_FEE_BPS = 180;        // Taker fee is 1.8%. Maker fee is 0%.
 
 // --- PAPER TRADING STATE & STATS ---
 let trades = { YES: null, NO: null };
+let virtualOrders = { YES: null, NO: null }; // Holds our resting limit bids
 
 let stats = {
     totalTrades: 0,
@@ -64,16 +46,14 @@ let stats = {
 };
 
 let lastMidpoint = { YES: 0, NO: 0 };
-let trend = { YES: 0, NO: 0 }; 
 let currentPrices = { YES: 0, NO: 0 }; 
-let recentTrades = []; // Keeps track of dashboard history
+let recentTrades = []; 
 
 let isExecuting = { YES: false, NO: false };
 let isExiting   = { YES: false, NO: false };
 let lastBook    = { YES: null, NO: null };
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0; 
-let postTradeCooldown = 0; // Timer to prevent immediate re-entry after losses
 
 let currentYesToken = null;
 let currentNoToken = null;
@@ -88,7 +68,6 @@ const priceLogFile = 'price_history.csv';
 const tradeStream = fs.createWriteStream(tradeLogFile, { flags: 'a' });
 const priceStream = fs.createWriteStream(priceLogFile, { flags: 'a' });
 
-// --- ZERO-LAG TERMINAL LOGGING ---
 const terminalLogFile = 'terminal_logs.txt';
 const terminalStream = fs.createWriteStream(terminalLogFile, { flags: 'a' });
 
@@ -96,9 +75,7 @@ const originalLog = console.log;
 console.log = function (...args) {
     originalLog.apply(console, args);
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
-    // Strip ANSI colors so the text file remains clean and readable
     const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
-    // Write asynchronously (Non-Blocking)
     terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
 };
 
@@ -106,31 +83,19 @@ if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
     tradeStream.write("Date,Market,Action,Entry_Price,Exit_Price,Shares,PnL_USD,Balance_USD,Win_Rate_Pct\n");
 }
 
-/**
- * PRICE HISTORY LOGGING (WINDOWED)
- * --------------------------------
- * Instead of logging every second forever, we:
- *  - keep a rolling in-memory buffer of the last PRE minutes (ring buffer)
- *  - when ANY trade opens, we dump the PRE buffer to CSV and start live logging
- *  - when all trades close, we continue logging for POST minutes, then stop
- *
- * This keeps price_history.csv small and very analysis-friendly.
- */
-const PRICE_LOG_INTERVAL_MS = 1000; // keep 1s resolution (you can set 2000 to shrink file further)
-const PRICE_PRE_MINUTES = 2;        // minutes BEFORE entry
-const PRICE_POST_MINUTES = 2;       // minutes AFTER final exit
+const PRICE_LOG_INTERVAL_MS = 1000; 
+const PRICE_PRE_MINUTES = 2;        
+const PRICE_POST_MINUTES = 2;       
 const PRICE_BUFFER_MAX = Math.max(1, Math.floor((PRICE_PRE_MINUTES * 60 * 1000) / PRICE_LOG_INTERVAL_MS));
 
-let priceBuffer = [];              // holds { ts, yesAsk, noAsk }
-let priceCaptureActive = false;    // are we writing ticks to CSV right now?
-let priceCaptureUntilTs = 0;       // after-exit capture end timestamp
-let priceCaptureLastTickTs = 0;    // enforce interval
-let priceCaptureStartTs = 0;       // for informational/debug
-let pricePreBufferDumped = false;  // dump pre-buffer once per capture session
+let priceBuffer = [];              
+let priceCaptureActive = false;    
+let priceCaptureUntilTs = 0;       
+let priceCaptureLastTickTs = 0;    
+let pricePreBufferDumped = false;  
 
 function ensurePriceHeader() {
     if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
-        // Added Phase column to make analysis easier (PRE/LIVE/POST)
         priceStream.write("Timestamp,YES_Ask,NO_Ask,Phase\n");
     }
 }
@@ -142,32 +107,25 @@ function addToPriceBuffer(ts, yesAsk, noAsk) {
 }
 
 function anyTradeActive() {
-    return !!(trades.YES || trades.NO);
+    return !!(trades.YES || trades.NO || virtualOrders.YES || virtualOrders.NO);
 }
 
 function startPriceCaptureIfNeeded() {
     if (priceCaptureActive) return;
-
     priceCaptureActive = true;
     pricePreBufferDumped = false;
-    priceCaptureStartTs = Date.now();
-    priceCaptureUntilTs = 0; // reset; will be set after exit
-    console.log(`${colors.cyan}[PRICE LOG] Capture session started. Pre=${PRICE_PRE_MINUTES}m Post=${PRICE_POST_MINUTES}m Interval=${PRICE_LOG_INTERVAL_MS}ms${colors.reset}`);
+    priceCaptureUntilTs = 0; 
+    console.log(`${colors.cyan}[PRICE LOG] Capture session started.${colors.reset}`);
 }
 
 function armPostCaptureWindow() {
-    // Called when a trade closes; we keep capturing until this time,
-    // but we only stop after ALL trades are closed.
     priceCaptureUntilTs = Date.now() + (PRICE_POST_MINUTES * 60 * 1000);
 }
 
 function dumpPreBufferOnce() {
     if (pricePreBufferDumped) return;
     pricePreBufferDumped = true;
-
     if (!priceBuffer.length) return;
-
-    // Dump buffered ticks as PRE
     for (const row of priceBuffer) {
         priceStream.write(`${new Date(row.ts).toISOString()},${row.yesAsk.toFixed(3)},${row.noAsk.toFixed(3)},PRE\n`);
     }
@@ -182,38 +140,26 @@ function maybeLogPriceTick() {
 
     if (!(yes > 0) || !(no > 0)) return;
 
-    // Always keep rolling buffer regardless of capture mode (in-memory only)
     addToPriceBuffer(now, yes, no);
 
-    // If trade becomes active, begin capture and dump PRE buffer
-    if (anyTradeActive()) {
-        startPriceCaptureIfNeeded();
-    }
+    if (anyTradeActive()) startPriceCaptureIfNeeded();
 
-    // If capturing, ensure pre is dumped and then write live/post ticks
     if (priceCaptureActive) {
         dumpPreBufferOnce();
-
-        // Determine phase label
         let phase = "LIVE";
         if (!anyTradeActive() && priceCaptureUntilTs > 0) phase = "POST";
 
         priceStream.write(`${new Date(now).toISOString()},${yes.toFixed(3)},${no.toFixed(3)},${phase}\n`);
         priceCaptureLastTickTs = now;
 
-        // Stop capture if we're past the post window AND no trades are active
         if (!anyTradeActive() && priceCaptureUntilTs > 0 && now >= priceCaptureUntilTs) {
             priceCaptureActive = false;
             priceCaptureUntilTs = 0;
             pricePreBufferDumped = false;
-
-            // clear buffer after session to avoid dumping stale history into next session
             priceBuffer = [];
-
             console.log(`${colors.gray}[PRICE LOG] Capture session ended.${colors.reset}`);
         }
     } else {
-        // Not capturing: still update tick timer so we don't buffer at ultra-high rate
         priceCaptureLastTickTs = now;
     }
 }
@@ -222,11 +168,11 @@ function logCompletedTrade(t, exitReason, exitPrice) {
     const grossReturn = exitPrice * t.shares;
     const entryCost = t.entryPrice * t.shares;
     
-    let totalFees = entryCost * (TAKER_FEE_BPS / 10000); 
-    if (exitReason !== "TAKE PROFIT") {
-        totalFees += (grossReturn * (TAKER_FEE_BPS / 10000));
-    }
-
+    // Maker entries pay 0 fees. Exits (Taker) pay fees.
+    let entryFee = t.isMaker ? 0 : entryCost * (TAKER_FEE_BPS / 10000); 
+    let exitFee = (exitReason !== "ARBITRAGE SETTLED") ? (grossReturn * (TAKER_FEE_BPS / 10000)) : 0;
+    
+    let totalFees = entryFee + exitFee;
     const netPnL = (grossReturn - entryCost) - totalFees;
 
     stats.totalTrades++;
@@ -253,78 +199,61 @@ function logCompletedTrade(t, exitReason, exitPrice) {
     const logEntry = `${new Date().toISOString()},BTC-5M-${t.side},${exitReason},${t.entryPrice},${exitPrice},${t.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
     tradeStream.write(logEntry); 
 
-    // Feed the mobile dashboard
     recentTrades.unshift({ 
-        time: new Date().toLocaleTimeString(),
-        side: t.side,
-        reason: exitReason, 
-        entry: t.entryPrice.toFixed(3), 
-        exit: exitPrice.toFixed(3), 
-        pnl: netPnL 
+        time: new Date().toLocaleTimeString(), side: t.side,
+        reason: exitReason, entry: t.entryPrice.toFixed(3), 
+        exit: exitPrice.toFixed(3), pnl: netPnL 
     });
     if (recentTrades.length > 10) recentTrades.pop();
 
-    // --- PAIR CLOSE / SURVIVOR PRICE LOGIC ---
-    const otherSide = t.side === 'YES' ? 'NO' : 'YES';
-    const otherTrade = trades[otherSide];
-
-    // If TAKE PROFIT happened, immediately close the other side (pair close)
-    if (exitReason === "TAKE PROFIT" && otherTrade) {
-        console.log(`${colors.cyan}[PAIR CLOSE] ${otherSide} will be closed immediately to lock net result.${colors.reset}`);
-        pairClosing = true;
-        isExiting[otherSide] = true;
-        const marketPrice = Math.max(0.01, currentPrices[otherSide] - 0.01);
-        const effectiveBidSize = Math.max(otherTrade.shares, MIN_BID_SIZE_FOR_EXIT);
-        executeFOK(otherTrade.tokenId, marketPrice, 'SELL', otherSide, effectiveBidSize, 'PAIR CLOSE').then(res => {
-            pairClosing = false;
-            if (res.success) {
-                // logCompletedTrade will be called by that execution's success path
-            } else {
-                isExiting[otherSide] = false;
-            }
-        });
-    }
-
-    // If STOP LOSS happened, compute required survivor exit price and set it on the survivor
-    if (exitReason === "STOP LOSS" && otherTrade) {
-        const feeRateDecimal = TAKER_FEE_BPS / 10000;
-        // losing trade details
-        const losingTrade = { entryPrice: t.entryPrice, exitPrice: exitPrice, shares: t.shares };
-        const survivorTrade = { entryPrice: otherTrade.entryPrice, shares: otherTrade.shares };
-
-        // compute L_needed = -grossLoss + fees on losing trade
-        const grossLoss = (losingTrade.exitPrice - losingTrade.entryPrice) * losingTrade.shares; // negative
-        const feesLosing = feeRateDecimal * (losingTrade.entryPrice + losingTrade.exitPrice) * losingTrade.shares;
-        const L_needed = -grossLoss + feesLosing;
-        const R = L_needed + DESIRED_NET_PROFIT_USD;
-
-        // Avoid division by zero
-        if (survivorTrade.shares > 0) {
-            const numerator = (R / survivorTrade.shares) + (survivorTrade.entryPrice * (1 + feeRateDecimal));
-            const denom = (1 - feeRateDecimal);
-            const requiredPrice = numerator / denom;
-            otherTrade.requiredExitPrice = requiredPrice;
-            console.log(`${colors.yellow}[REQUIRED SURVIVOR PRICE] ${otherSide} must reach $${requiredPrice.toFixed(3)} to cover loss + fees + profit.${colors.reset}`);
-        } else {
-            console.log(`${colors.yellow}[REQUIRED SURVIVOR PRICE] Could not compute required price for ${otherSide} (zero shares).${colors.reset}`);
-        }
-
-        // set a short cooldown after a stop loss
-        postTradeCooldown = Date.now() + 45000; // 45s
-    }
-
-    // Clear the closed trade
     trades[t.side] = null;
     isExiting[t.side] = false; 
-    
-    // Arm post-trade capture window when a trade closes.
-    // The capture will actually stop only after ALL trades are closed AND post window expires.
     armPostCaptureWindow();
+}
 
-    if (exitReason === "STOP LOSS") {
-        postTradeCooldown = Date.now() + 30000; 
-    } else {
-        postTradeCooldown = 0;
+function settleArbitrageWin() {
+    const tYES = trades['YES'];
+    const tNO = trades['NO'];
+
+    if (tYES && tNO) {
+        const totalCost = (tYES.entryPrice * tYES.shares) + (tNO.entryPrice * tNO.shares);
+        
+        // At expiry, one side pays $1 per share. Since we bought equal dollar amounts, 
+        // we use the shares of the side that won. For simplicity in the log, 
+        // we average/use YES shares since they are mathematically identical.
+        const payout = tYES.shares * 1.00; 
+        const netPnL = payout - totalCost; // No exit fees at resolution!
+
+        stats.totalTrades += 2;
+        stats.wins += 2; 
+        stats.currentBalance += netPnL;
+
+        const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
+        const roi = (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100).toFixed(2);
+
+        console.log(`\n${colors.brightYellow}========================================${colors.reset}`);
+        console.log(`[ARBITRAGE SETTLED] Market Expired! Pair successfully held.`);
+        console.log(`Entry Cost: $${totalCost.toFixed(2)} (0 Maker Fees)`);
+        console.log(`Payout: $${payout.toFixed(2)}`);
+        console.log(`NET PnL: ${colors.green}+$${netPnL.toFixed(4)}${colors.reset}`);
+        console.log(`${colors.gray}---${colors.reset}`);
+        console.log(`[STATS] Balance: $${stats.currentBalance.toFixed(2)} (${roi > 0 ? '+' : ''}${roi}% ROI)`);
+        console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
+        console.log(`${colors.gray}========================================\n${colors.reset}`);
+
+        const logEntry = `${new Date().toISOString()},BTC-5M-PAIR,ARBITRAGE SETTLED,${MAKER_BID_PRICE},1.00,${tYES.shares},${netPnL.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
+        tradeStream.write(logEntry);
+
+        recentTrades.unshift({ 
+            time: new Date().toLocaleTimeString(), side: "PAIR",
+            reason: "ARB WIN", entry: MAKER_BID_PRICE.toFixed(3), 
+            exit: "1.000", pnl: netPnL 
+        });
+        if (recentTrades.length > 10) recentTrades.pop();
+
+        trades = { YES: null, NO: null };
+        virtualOrders = { YES: null, NO: null };
+        armPostCaptureWindow();
     }
 }
 
@@ -337,18 +266,11 @@ async function executeFOK(tokenId, price, buySell, marketSide, sizeNeeded, actio
         const refPrice = buySell === 'BUY' ? price : (t ? t.entryPrice : price);
         const shares = (BET_SIZE_USD / refPrice).toFixed(2);
         
-        if (parseFloat(sizeNeeded) < parseFloat(shares)) {
-            return false;
-        }
+        if (parseFloat(sizeNeeded) < parseFloat(shares)) return false;
 
-        const logColor = buySell === 'BUY' ? colors.cyan : (actionLog === 'TAKE PROFIT' ? colors.brightYellow : colors.red);
+        const logColor = buySell === 'BUY' ? colors.cyan : colors.red;
         console.log(`[PAPER SIMULATION] ${logColor}${actionLog} ${buySell} ${marketSide} @ $${price.toFixed(3)}...${colors.reset}`);
         console.log(`[PAPER SUCCESS] ${logColor}${actionLog} filled instantly.${colors.reset}`);
-
-        // If we are buying (entry), start capture session right away so PRE gets dumped promptly
-        if (buySell === 'BUY') {
-            startPriceCaptureIfNeeded();
-        }
 
         return { success: true, sharesFilled: shares };
 
@@ -369,132 +291,91 @@ function handleMarketUpdate(data) {
     const bestBidSize = data.bestBidSize;
     
     if (isNaN(bestAsk) || isNaN(bestBid)) return;
-
-    const currentMid = (bestAsk + bestBid) / 2;
-    const spread = bestAsk - bestBid; 
     
     const tokenId = data.asset_id;
     const side = tokenId === currentYesToken ? 'YES' : (tokenId === currentNoToken ? 'NO' : null);
     if (!side) return; 
 
-    // Store live book for this side so the opposite side can read it at entry time
     lastBook[side] = { tokenId, bestAsk, bestAskSize, bestBid, bestBidSize, ts: Date.now() };
-
     currentPrices[side] = bestAsk;
-
-    // --- SINGLE-TICK MEMORY ---
-    if (lastMidpoint[side] !== 0) {
-        trend[side] = currentMid - lastMidpoint[side];
-    }
-    lastMidpoint[side] = currentMid;
 
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    if (secondsLeft > 270) {
-        return; 
+    // Wait for the initial 30 seconds of the market before placing limits
+    if (secondsLeft > 270) return; 
+
+    // ---------------------------------------------------------
+    // 1. PLACE MAKER LIMIT ORDERS
+    // ---------------------------------------------------------
+    if (!virtualOrders.YES && !virtualOrders.NO && !trades.YES && !trades.NO && secondsLeft > SCRATCH_TIME_SEC) {
+        const shares = parseFloat((BET_SIZE_USD / MAKER_BID_PRICE).toFixed(2));
+        virtualOrders.YES = { side: 'YES', tokenId: currentYesToken, price: MAKER_BID_PRICE, shares: shares, filled: false };
+        virtualOrders.NO = { side: 'NO', tokenId: currentNoToken, price: MAKER_BID_PRICE, shares: shares, filled: false };
+        console.log(`\n${colors.cyan}[MAKER] Placed resting Limit Bids at $${MAKER_BID_PRICE} for YES and NO.${colors.reset}`);
+        startPriceCaptureIfNeeded(); 
     }
 
-    // --- ENTRY: require both sides near center and buy $1 on each side (no dynamic sizing) ---
-    if (pairClosing) return; // block new entries while pair close is running
+    // ---------------------------------------------------------
+    // 2. CHECK FOR MAKER FILLS
+    // ---------------------------------------------------------
+    if (virtualOrders[side] && !virtualOrders[side].filled) {
+        // If Ask drops to our Bid, or someone sells through it (Bid drops below it)
+        if (bestAsk <= virtualOrders[side].price || bestBid < virtualOrders[side].price) {
+            virtualOrders[side].filled = true;
+            
+            trades[side] = { 
+                active: true, side: side, tokenId: virtualOrders[side].tokenId, 
+                entryPrice: virtualOrders[side].price, shares: virtualOrders[side].shares, 
+                entryTime: now, isMaker: true // 0 Fees
+            };
+            
+            console.log(`${colors.green}[FILLED] Maker Bid on ${side} filled at $${virtualOrders[side].price}!${colors.reset}`);
 
-    if (!trades['YES'] && !trades['NO'] && !isExecuting[side] && !isExiting[side] && secondsLeft > 60 && Date.now() > postTradeCooldown) {
-        if (spread > MAX_ALLOWED_SPREAD || bestBid === 0) return;
-
-        // require triggered side ask to be inside center band
-        if (!(bestAsk >= CENTER_MIN && bestAsk <= CENTER_MAX)) return;
-
-        // require opposite book exists and its ask also inside center band
-        const oppSide  = side === 'YES' ? 'NO' : 'YES';
-        const opp = lastBook[oppSide];
-        if (!opp) return;
-
-        const oppAsk = opp.bestAsk;
-        if (!(oppAsk >= CENTER_MIN && oppAsk <= CENTER_MAX)) {
-            // opposite not near center — skip entry
-            return;
-        }
-
-        // Both sides are near center. Enter BOTH sides with $1 each.
-        // Compute shares = $1 / ask (paper fill).
-        const sharesThis = parseFloat((BET_SIZE_USD / bestAsk).toFixed(2));
-        const sharesOpp  = parseFloat((BET_SIZE_USD / oppAsk).toFixed(2));
-
-        // Enter triggered side
-        executeFOK(tokenId, bestAsk, 'BUY', side, bestAskSize, 'ENTRY').then(res => {
-            if (res.success) {
-                trades[side] = { active: true, side, tokenId, entryPrice: bestAsk, shares: sharesThis, entryTime: Date.now(), requiredExitPrice: null };
+            if (virtualOrders.YES.filled && virtualOrders.NO.filled) {
+                console.log(`\n${colors.brightYellow}[ARBITRAGE LOCKED] Both sides filled at $${MAKER_BID_PRICE}! Risk-free profit locked. Holding to Expiry.${colors.reset}`);
             }
-        });
+        }
+    }
 
-        // Enter opposite side using its last seen ask (paper fill)
-        const oppToken = side === 'YES' ? currentNoToken : currentYesToken;
-        if (!trades[oppSide] && !isExecuting[oppSide]) {
-            executeFOK(oppToken, oppAsk, 'BUY', oppSide, opp.bestAskSize, 'ENTRY').then(res => {
-                if (res.success) {
-                    trades[oppSide] = { active: true, side: oppSide, tokenId: oppToken, entryPrice: oppAsk, shares: sharesOpp, entryTime: Date.now(), requiredExitPrice: null };
+    // ---------------------------------------------------------
+    // 3. ADVERSE SELECTION MANAGER ("THE SCRATCH")
+    // ---------------------------------------------------------
+    if (secondsLeft <= SCRATCH_TIME_SEC && virtualOrders.YES && virtualOrders.NO) {
+        const yesFilled = virtualOrders.YES.filled;
+        const noFilled = virtualOrders.NO.filled;
+
+        if (yesFilled !== noFilled) { 
+            const filledSide = yesFilled ? 'YES' : 'NO';
+            const unfilledSide = yesFilled ? 'NO' : 'YES';
+
+            if (!isExiting[filledSide]) {
+                console.log(`\n${colors.magenta}[DANGER] ${unfilledSide} never filled! Canceling unfilled order.${colors.reset}`);
+                virtualOrders[unfilledSide].filled = true; // Stop checking
+                trades[unfilledSide] = null; 
+                
+                // Market-sell the side we are stuck holding
+                const filledBook = lastBook[filledSide];
+                if (filledBook && filledBook.bestBid > 0) {
+                    console.log(`${colors.yellow}[SCRATCH] Dumping ${filledSide} to avoid directional risk into expiry.${colors.reset}`);
+                    isExiting[filledSide] = true;
+                    executeFOK(trades[filledSide].tokenId, filledBook.bestBid, 'SELL', filledSide, filledBook.bestBidSize, 'SCRATCH EXIT').then(res => {
+                        if (res.success) logCompletedTrade(trades[filledSide], "SCRATCH EXIT", filledBook.bestBid);
+                        else isExiting[filledSide] = false;
+                    });
                 }
-            });
-        }
-
-        return;
-    }
-
-    // --- EXIT: each side watches its own price feed and exits at its own TP/SL ---
-    const t = trades[side];
-    if (t && t.tokenId === tokenId && !isExecuting[side] && !isExiting[side]) {
-        
-        if (secondsLeft <= 8) {
-            console.log(`\n${colors.magenta}[EXPIRATION BAILOUT - ${side}] Market ending. Attempting controlled exit before resolution!${colors.reset}`);
-            isExiting[side] = true;
-            const bailoutPrice = Math.max(0.01, bestBid - 0.01);
-            const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
-            executeFOK(tokenId, bailoutPrice, 'SELL', side, effectiveBidSize, 'BAILOUT').then(res => {
-                if (res.success) logCompletedTrade(t, "EXPIRATION BAILOUT", bailoutPrice);
-                else isExiting[side] = false; 
-            });
-            return;
-        }
-
-        const distanceToCenterBid = Math.abs(0.50 - bestBid);
-        const volatilityMultiplierBid = 1 - (distanceToCenterBid / 0.50);
-
-        const dynamicTP_Gap = MIN_TP_CENTS + ((MAX_TP_CENTS - MIN_TP_CENTS) * volatilityMultiplierBid);
-        const dynamicSL_Gap = MIN_SL_CENTS + ((MAX_SL_CENTS - MIN_SL_CENTS) * volatilityMultiplierBid);
-
-        const entryFeeCost = t.entryPrice * (TAKER_FEE_BPS / 10000);
-        let targetProfitPrice = t.entryPrice + dynamicTP_Gap + entryFeeCost;
-        const stopLossPrice = t.entryPrice - dynamicSL_Gap;
-
-        // If a requiredExitPrice was set (because the other side lost), use exactly that — no greed
-        if (t.requiredExitPrice && isFinite(t.requiredExitPrice)) {
-            targetProfitPrice = t.requiredExitPrice;
-        }
-
-        if (bestBid >= targetProfitPrice) {
-            isExiting[side] = true;
-            executeFOK(tokenId, bestBid, 'SELL', side, bestBidSize, 'TAKE PROFIT').then(res => {
-                if (res.success) logCompletedTrade(t, "TAKE PROFIT", bestBid);
-                else isExiting[side] = false;
-            });
-            return;
-        }
-
-        const minReasonableBid = stopLossPrice - 0.03; 
-
-        if (bestBid > minReasonableBid && bestBid <= stopLossPrice) {
-            if (spread > MAX_EXIT_SPREAD) {
-                console.log(`${colors.yellow}[SHAKEOUT AVOIDED - ${side}] Bid crashed to $${bestBid.toFixed(2)} but spread is wide ($${spread.toFixed(2)}). Holding position.${colors.reset}`);
-                return; 
             }
-
-            isExiting[side] = true;
-            const effectiveBidSize = Math.max(bestBidSize, MIN_BID_SIZE_FOR_EXIT);
-            executeFOK(tokenId, bestBid, 'SELL', side, effectiveBidSize, 'STOP LOSS').then(res => {
-                if (res.success) logCompletedTrade(t, "STOP LOSS", bestBid); 
-                else isExiting[side] = false;
-            });
-            return;
+        } 
+        else if (!yesFilled && !noFilled) {
+            // Neither filled, market was too stable
+            if (virtualOrders.YES.price !== 0) { // Just use price as a flag so we only log once
+                console.log(`\n${colors.gray}[CANCEL] Time expired. Neither side filled. Canceling both limit orders.${colors.reset}`);
+                virtualOrders.YES.price = 0; 
+                virtualOrders.NO.price = 0; 
+                virtualOrders.YES.filled = true; 
+                virtualOrders.NO.filled = true; 
+                armPostCaptureWindow();
+            }
         }
     }
 }
@@ -582,9 +463,9 @@ async function loadNextMarket() {
             marketEndTime   = currentIntervalEndSec * 1000; 
             
             lastMidpoint = { YES: 0, NO: 0 };
-            trend = { YES: 0, NO: 0 };
             currentPrices = { YES: 0, NO: 0 };
             trades = { YES: null, NO: null };
+            virtualOrders = { YES: null, NO: null }; // Reset maker state
             isExecuting = { YES: false, NO: false };
             isExiting   = { YES: false, NO: false };
             lastBook    = { YES: null, NO: null };
@@ -612,7 +493,6 @@ http.createServer((req, res) => {
         return;
     }
 
-    // Read the HTML file dynamically so you can edit it without restarting the bot!
     fs.readFile(path.join(__dirname, 'dashboard.html'), 'utf8', (err, data) => {
         if (err) {
             res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -627,7 +507,7 @@ http.createServer((req, res) => {
 });
 
 async function runLiveTrader() {
-    console.log(`${colors.magenta}Booting Pure Dynamic Near-Strike Engine in PAPER TRADING MODE...${colors.reset}`);
+    console.log(`${colors.magenta}Booting MAKER ARBITRAGE Engine in PAPER TRADING MODE...${colors.reset}`);
     
     const account = privateKeyToAccount(rawKey);
     const walletClient = createWalletClient({ account, chain: polygon, transport: viemHttp() });
@@ -646,16 +526,23 @@ async function runLiveTrader() {
         }
 
         const now = Date.now();
-        if (now >= marketEndTime && !isSearchingNextMarket) loadNextMarket();
+        // Check if market expired!
+        if (now >= marketEndTime && !isSearchingNextMarket) {
+            if (trades.YES && trades.NO) {
+                settleArbitrageWin(); // We successfully held both to expiry
+            }
+            loadNextMarket();
+        }
 
-        // Windowed price logging (instead of writing every second forever)
         maybeLogPriceTick();
 
         if (Math.floor(now / 1000) % 10 === 0) {
-            const activeList = ['YES','NO'].filter(s => trades[s]).map(s => `${s}@$${trades[s].entryPrice.toFixed(2)}`).join(' + ');
-            const statusColor = activeList ? colors.cyan : colors.gray;
-            const status = activeList ? `HOLDING ${activeList}` : 'HUNTING STRIKE VOLATILITY';
-            console.log(`${statusColor}[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
+            let status = 'WAITING FOR MAKER FILLS';
+            if (trades.YES && trades.NO) status = `${colors.brightYellow}LOCKED HEDGE - WAITING FOR EXPIRY${colors.reset}`;
+            else if (trades.YES) status = `HOLDING YES - WAITING FOR NO`;
+            else if (trades.NO) status = `HOLDING NO - WAITING FOR YES`;
+            
+            console.log(`${colors.cyan}[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
         }
     }, 250);
 }
