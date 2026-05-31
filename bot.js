@@ -266,9 +266,6 @@ function handleMarketUpdate(data) {
     const now = Date.now();
     const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
 
-    // Wait for the initial 30 seconds of the market before placing limits
-    if (secondsLeft > 270) return; 
-
     // ---------------------------------------------------------
     // 1. PLACE MAKER LIMIT ORDERS (explicit order state)
     // ---------------------------------------------------------
