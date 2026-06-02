@@ -8,24 +8,28 @@
   <style>
     :root {
       --bg: #050505;
-      --card: rgba(18,18,22,0.75);
-      --border: rgba(14,165,233,0.18);
+
+      /* Card + border */
+      --card-border: rgba(59, 130, 246, 0.22); /* blue */
+      --card-glow: rgba(14, 165, 233, 0.10);
+
+      /* Text */
       --text: #f1f5f9;
-      --muted: #64748b;
+      --muted: #94a3b8;
+
+      /* Accents */
       --cyan: #0ea5e9;
       --green: #10b981;
       --red: #ef4444;
       --yellow: #facc15;
 
-      /* pleasant gold accents */
+      /* Gold gradient for text */
       --gold-1: #f59e0b;
       --gold-2: #fcd34d;
       --gold-3: #fef08a;
-      --gold-glow: rgba(252, 211, 77, 0.35);
 
-      /* numeric fonts (avoid smooth/long UI font for numbers) */
+      /* Fonts */
       --money: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -33,9 +37,9 @@
       margin: 0;
       padding: 24px 14px;
       background:
-        radial-gradient(circle at top right, rgba(252,211,77,0.07), transparent 40%),
-        radial-gradient(circle at top right, rgba(14,165,233,0.08), transparent 35%),
-        radial-gradient(circle at bottom left, rgba(16,185,129,0.06), transparent 35%),
+        radial-gradient(circle at top right, rgba(14,165,233,0.10), transparent 38%),
+        radial-gradient(circle at bottom left, rgba(59,130,246,0.08), transparent 40%),
+        radial-gradient(circle at bottom right, rgba(252,211,77,0.05), transparent 45%),
         var(--bg);
       color: var(--text);
       font-family: var(--ui);
@@ -46,40 +50,40 @@
       margin: 0 auto;
     }
 
+    .gold-text {
+      background: linear-gradient(90deg, var(--gold-1), var(--gold-2), var(--gold-3));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
     .title {
       text-align: center;
       font-weight: 900;
       letter-spacing: 1.4px;
       margin-bottom: 18px;
       font-size: 1.45rem;
-      background: linear-gradient(90deg, var(--gold-1), var(--gold-2), var(--gold-3));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
     }
 
+    /* Blue gradient cards */
     .card {
-      background: var(--card);
-      border: 1px solid var(--border);
       border-radius: 18px;
       padding: 16px;
       margin-bottom: 14px;
-      box-shadow: 0 14px 40px rgba(0,0,0,0.22);
-    }
-
-    /* subtle gold gradient border where it matters (hero + engine status) */
-    .card.gold {
-      border: 1px solid transparent;
+      border: 1px solid var(--card-border);
       background:
-        linear-gradient(var(--card), var(--card)) padding-box,
-        linear-gradient(135deg, rgba(245,158,11,0.40), rgba(252,211,77,0.26), rgba(254,240,138,0.10)) border-box;
+        radial-gradient(circle at top left, rgba(14,165,233,0.18), transparent 45%),
+        radial-gradient(circle at bottom right, rgba(59,130,246,0.14), transparent 55%),
+        linear-gradient(180deg, rgba(15, 23, 42, 0.70), rgba(2, 6, 23, 0.62));
+      box-shadow:
+        0 14px 40px rgba(0,0,0,0.28),
+        0 0 0 1px rgba(255,255,255,0.02) inset,
+        0 0 24px var(--card-glow);
+      backdrop-filter: blur(14px);
     }
 
     .hero {
       text-align: center;
       padding: 24px 16px;
-      background:
-        radial-gradient(circle at top, rgba(252,211,77,0.06), transparent 55%),
-        var(--card);
     }
 
     .sub {
@@ -87,11 +91,11 @@
       text-transform: uppercase;
       letter-spacing: 1.4px;
       font-size: 0.75rem;
-      font-weight: 700;
+      font-weight: 800;
       margin-bottom: 8px;
     }
 
-    /* money numbers */
+    /* monetary looking numbers */
     .money {
       font-family: var(--money);
       font-variant-numeric: tabular-nums lining-nums;
@@ -102,7 +106,7 @@
       font-family: var(--money);
       font-variant-numeric: tabular-nums lining-nums;
       font-size: 3rem;
-      font-weight: 800;
+      font-weight: 900;
     }
 
     .roi {
@@ -112,20 +116,22 @@
       border-radius: 999px;
       font-family: var(--money);
       font-variant-numeric: tabular-nums lining-nums;
-      font-weight: 800;
+      font-weight: 900;
       font-size: 0.95rem;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.18);
     }
 
     .roi.green {
       color: #34d399;
-      background: rgba(16,185,129,0.14);
-      border: 1px solid rgba(16,185,129,0.35);
+      border-color: rgba(16,185,129,0.35);
+      background: rgba(16,185,129,0.12);
     }
 
     .roi.red {
       color: #f87171;
-      background: rgba(239,68,68,0.14);
-      border: 1px solid rgba(239,68,68,0.35);
+      border-color: rgba(239,68,68,0.35);
+      background: rgba(239,68,68,0.12);
     }
 
     .grid {
@@ -134,9 +140,7 @@
       gap: 14px;
     }
 
-    .full {
-      grid-column: 1 / -1;
-    }
+    .full { grid-column: 1 / -1; }
 
     h2 {
       margin: 0 0 12px;
@@ -149,14 +153,13 @@
       gap: 10px;
     }
 
-    /* add a small gold dot to headings for a nicer look */
     h2::before {
       content: "";
       width: 5px;
       height: 5px;
       border-radius: 999px;
-      background: var(--gold-2);
-      box-shadow: 0 0 10px var(--gold-glow);
+      background: #60a5fa;
+      box-shadow: 0 0 12px rgba(96,165,250,0.45);
       flex: 0 0 auto;
     }
 
@@ -164,7 +167,7 @@
       font-family: var(--money);
       font-variant-numeric: tabular-nums lining-nums;
       font-size: 1.55rem;
-      font-weight: 800;
+      font-weight: 900;
     }
 
     .small {
@@ -180,7 +183,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      font-weight: 800;
+      font-weight: 900;
       font-size: 1.03rem;
     }
 
@@ -188,8 +191,8 @@
       width: 9px;
       height: 9px;
       border-radius: 999px;
-      background: var(--gold-2);
-      box-shadow: 0 0 12px var(--gold-glow);
+      background: var(--yellow);
+      box-shadow: 0 0 12px rgba(250,204,21,0.55);
       animation: blink 1.4s infinite;
       flex-shrink: 0;
     }
@@ -213,8 +216,8 @@
     }
 
     .book-card {
-      background: rgba(0,0,0,0.24);
-      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(0,0,0,0.22);
+      border: 1px solid rgba(255,255,255,0.07);
       padding: 12px;
       border-radius: 14px;
       font-family: var(--money);
@@ -244,17 +247,20 @@
       font-size: 0.78rem;
       font-weight: 900;
       margin-left: 6px;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.18);
     }
 
     .mode-paper {
       color: #93c5fd;
+      border-color: rgba(59,130,246,0.40);
       background: rgba(59,130,246,0.12);
     }
 
     .mode-live {
-      color: #f87171;
-      background: rgba(239,68,68,0.13);
+      color: #fda4af;
+      border-color: rgba(239,68,68,0.40);
+      background: rgba(239,68,68,0.12);
     }
 
     .ledger-row {
@@ -267,9 +273,7 @@
       font-variant-numeric: tabular-nums lining-nums;
     }
 
-    .ledger-row:last-child {
-      border-bottom: none;
-    }
+    .ledger-row:last-child { border-bottom: none; }
 
     .empty {
       text-align: center;
@@ -283,48 +287,50 @@
 
 <body>
   <div class="container">
-    <div class="title">PolyBot Terminal</div>
+    <div class="title gold-text">PolyBot Terminal</div>
 
-    <div class="card hero gold">
+    <div class="card hero">
       <div class="sub">Portfolio</div>
-      <div id="balance" class="balance money">$0.00</div>
-      <div id="roi" class="roi green money">+0.00% ROI</div>
+      <div id="balance" class="balance money gold-text">$0</div>
+      <div id="roi" class="roi green money">+0% ROI</div>
     </div>
 
     <div class="grid">
-      <div class="card full gold">
-        <h2>Engine Status <span id="mode-pill" class="mode-pill mode-paper">PAPER</span></h2>
+      <div class="card full">
+        <h2>Engine Status <span id="mode-pill" class="mode-pill mode-paper">Paper</span></h2>
+
         <div class="status-line">
           <div id="pulse" class="pulse"></div>
-          <div id="status">INITIALISING</div>
+          <div id="status" class="gold-text">Initializing</div>
         </div>
-        <div id="last-action" class="small">Last: -</div>
+
+        <div id="last-action" class="small">Last action: —</div>
 
         <div class="book">
           <div class="book-card">
-            <div class="label">YES Book</div>
-            <div>Ask: <span id="yes-ask" class="cyan money">---</span></div>
-            <div>Bid: <span id="yes-bid" class="money">---</span></div>
-            <div>Spread: <span id="yes-spread" class="money">---</span></div>
+            <div class="label">Yes Book</div>
+            <div>Ask: <span id="yes-ask" class="cyan money">—</span></div>
+            <div>Bid: <span id="yes-bid" class="money">—</span></div>
+            <div>Spread: <span id="yes-spread" class="money">—</span></div>
           </div>
 
           <div class="book-card">
-            <div class="label">NO Book</div>
-            <div>Ask: <span id="no-ask" class="cyan money">---</span></div>
-            <div>Bid: <span id="no-bid" class="money">---</span></div>
-            <div>Spread: <span id="no-spread" class="money">---</span></div>
+            <div class="label">No Book</div>
+            <div>Ask: <span id="no-ask" class="cyan money">—</span></div>
+            <div>Bid: <span id="no-bid" class="money">—</span></div>
+            <div>Spread: <span id="no-spread" class="money">—</span></div>
           </div>
         </div>
 
         <div class="small" style="margin-top: 10px;">
-          AskSum: <span id="ask-sum" class="money">---</span> |
-          BidSum: <span id="bid-sum" class="money">---</span>
+          Ask sum: <span id="ask-sum" class="money">—</span> |
+          Bid sum: <span id="bid-sum" class="money">—</span>
         </div>
       </div>
 
       <div class="card">
         <h2>Win Rate</h2>
-        <div id="win-rate" class="metric cyan money">0.0%</div>
+        <div id="win-rate" class="metric cyan money">0%</div>
         <div id="win-details" class="small money">0W / 0L</div>
       </div>
 
@@ -336,35 +342,36 @@
 
       <div class="card full">
         <h2>Trade Ledger</h2>
-        <div id="history" class="empty">Awaiting executions...</div>
+        <div id="history" class="empty">Waiting for executions…</div>
       </div>
     </div>
   </div>
 
   <script>
-    // currency / number formatting (monetary look + separators)
-    function money(amount, currency = 'USD') {
+    // Whole-number display (no 0.02 style). Also keeps digits aligned via the .money class.
+    function whole(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      return String(Math.round(n));
+    }
+
+    // For money: whole dollars (no cents)
+    function moneyWhole(amount, currency = 'USD') {
       const n = Number(amount);
-      if (!Number.isFinite(n)) return '$0.00';
+      if (!Number.isFinite(n)) return '$0';
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(n);
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(Math.round(n));
     }
 
-    function centsMoney(value) {
+    // Convert price (0..1 dollars) to whole cents (e.g., 0.52 -> 52)
+    function centsWhole(value) {
       const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return '---';
-      // value is dollars; convert to cents -> dollars again, but keep formatting stable
-      return money(Math.round(n * 100) / 100);
-    }
-
-    function spreadDec(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return '---';
-      return n.toFixed(3);
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      return String(Math.round(n * 100));
     }
 
     async function updateDashboard() {
@@ -378,9 +385,9 @@
         const yes = book.YES || {};
         const no = book.NO || {};
 
-        // balance: proper money format (and numeric font via CSS class)
+        // Balance: whole dollars (no decimals)
         document.getElementById('balance').innerText =
-          money(stats.currentBalance || 0);
+          moneyWhole(stats.currentBalance || 0);
 
         const roi =
           stats.startingBalance
@@ -388,66 +395,67 @@
             : 0;
 
         const roiEl = document.getElementById('roi');
-        roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
+        roiEl.innerText = (roi >= 0 ? '+' : '') + whole(roi) + '% ROI';
         roiEl.className = 'roi ' + (roi >= 0 ? 'green' : 'red') + ' money';
 
         const winRate =
           stats.totalTrades > 0
-            ? ((stats.wins / stats.totalTrades) * 100).toFixed(1)
-            : '0.0';
+            ? (stats.wins / stats.totalTrades) * 100
+            : 0;
 
-        document.getElementById('win-rate').innerText = winRate + '%';
+        document.getElementById('win-rate').innerText = whole(winRate) + '%';
         document.getElementById('win-details').innerText =
-          `${stats.wins || 0}W / ${stats.losses || 0}L`;
-        document.getElementById('total-trades').innerText = stats.totalTrades || 0;
+          `${whole(stats.wins || 0)}W / ${whole(stats.losses || 0)}L`;
+        document.getElementById('total-trades').innerText = whole(stats.totalTrades || 0);
 
         const mode = (data.mode || 'paper').toUpperCase();
         const modePill = document.getElementById('mode-pill');
-        modePill.innerText = mode;
+        modePill.innerText = mode === 'LIVE' ? 'Live' : 'Paper';
         modePill.className = 'mode-pill ' + (mode === 'LIVE' ? 'mode-live' : 'mode-paper');
 
-        document.getElementById('status').innerText =
-          trade.readableStatus || trade.status || 'UNKNOWN';
+        // clean grammar (no underscores)
+        const statusText = trade.readableStatus || trade.status || 'Unknown';
+        document.getElementById('status').innerText = statusText;
 
-        // last-action: keep as-is but ensure any numbers look tabular via .small font
-        document.getElementById('last-action').innerText =
-          'Last: ' + (trade.lastAction || '-');
+        const last = trade.lastAction ? String(trade.lastAction) : '—';
+        document.getElementById('last-action').innerText = 'Last action: ' + last;
 
         document.getElementById('pulse').className =
           trade.active ? 'pulse active' : 'pulse';
 
-        // book numbers: show as money (not "smooth long fonts" + more monetary feel)
-        document.getElementById('yes-ask').innerText = centsMoney(yes.ask);
-        document.getElementById('yes-bid').innerText = centsMoney(yes.bid);
-        document.getElementById('yes-spread').innerText = spreadDec(yes.spread);
+        // Book: whole cents (no decimals)
+        document.getElementById('yes-ask').innerText = centsWhole(yes.ask);
+        document.getElementById('yes-bid').innerText = centsWhole(yes.bid);
+        document.getElementById('yes-spread').innerText = whole(yes.spread);
 
-        document.getElementById('no-ask').innerText = centsMoney(no.ask);
-        document.getElementById('no-bid').innerText = centsMoney(no.bid);
-        document.getElementById('no-spread').innerText = spreadDec(no.spread);
+        document.getElementById('no-ask').innerText = centsWhole(no.ask);
+        document.getElementById('no-bid').innerText = centsWhole(no.bid);
+        document.getElementById('no-spread').innerText = whole(no.spread);
 
-        document.getElementById('ask-sum').innerText = spreadDec(book.askSum);
-        document.getElementById('bid-sum').innerText = spreadDec(book.bidSum);
+        document.getElementById('ask-sum').innerText = whole(book.askSum);
+        document.getElementById('bid-sum').innerText = whole(book.bidSum);
 
         const history = data.recentTrades || [];
         const historyEl = document.getElementById('history');
 
         if (!history.length) {
           historyEl.className = 'empty';
-          historyEl.innerText = 'Awaiting executions...';
+          historyEl.innerText = 'Waiting for executions…';
         } else {
           historyEl.className = '';
           historyEl.innerHTML = history.map(t => {
             const pnl = Number(t.pnl || 0);
             const cls = pnl >= 0 ? 'green-text' : 'red-text';
-            const sign = pnl >= 0 ? '+' : '';
+            const sign = pnl >= 0 ? '+' : '−';
 
+            // Whole-number PnL (no decimals)
             return `
               <div class="ledger-row">
                 <div>
                   <div>${t.time || ''}</div>
                   <div class="small">${t.reason || ''}</div>
                 </div>
-                <div class="${cls}">${sign}${money(Math.abs(pnl))}</div>
+                <div class="${cls}">${sign}${moneyWhole(Math.abs(pnl))}</div>
               </div>
             `;
           }).join('');
