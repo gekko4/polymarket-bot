@@ -34,16 +34,25 @@ let clobClient;
 // STRATEGY CONFIG
 // -----------------------------------------------------------------------------
 // PAPER trading engine.
-// It simulates RESTING limit bids correctly.
 //
-// Important protection:
-// If the bot starts/restarts while one side is already below 0.49,
-// it does NOT treat that as a valid fill.
-// It first waits until BOTH asks are above TARGET_BID + ARM_BUFFER.
-// Only then does it treat the simulated 0.49 bids as resting/live.
+// Corrected strategy:
+// 1. Do NOT enter just because one side touches 0.49.
+// 2. First require the whole market to be near the 50/50 centre.
+// 3. Only then arm simulated resting limit bids at 0.49 on YES and NO.
+// 4. If one fills, the opposite side has 15 seconds to fill.
+// 5. If not, bailout the unmatched leg at current bid.
 
 const TARGET_BID = 0.49;
-const ARM_BUFFER = 0.02;                       // arm only if YES ask and NO ask are > 0.51
+
+// Centre-regime filter.
+// The strategy only arms if BOTH YES mid and NO mid are inside this band.
+const CENTER_LOW = 0.45;
+const CENTER_HIGH = 0.55;
+
+// Execution realism filter.
+// A 0.49 buy order is only considered "resting" if the ask is still above 0.49.
+const MIN_ASK_ABOVE_TARGET = 0.005;
+
 const SECOND_LEG_TIMEOUT_MS = 15_000;
 const BET_SIZE_USD_PER_SIDE = 1.00;
 const MIN_SECONDS_LEFT_TO_ARM = 25;
@@ -142,7 +151,7 @@ if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
 }
 
 if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
-  priceStream.write('Timestamp,YES_Ask,NO_Ask,YES_Bid,NO_Bid\n');
+  priceStream.write('Timestamp,YES_Ask,NO_Ask,YES_Bid,NO_Bid,YES_Mid,NO_Mid\n');
 }
 
 // -----------------------------------------------------------------------------
@@ -171,19 +180,68 @@ function bothPricesKnown() {
   );
 }
 
-function canArmRestingLimitOrders() {
+function getMid(side) {
+  if (!bothPricesKnown()) return 0;
+  return (currentAsks[side] + currentBids[side]) / 2;
+}
+
+function fmtPrice(value) {
+  return value > 0 ? value.toFixed(3) : '---';
+}
+
+function fmtMid(side) {
+  const mid = getMid(side);
+  return mid > 0 ? mid.toFixed(3) : '---';
+}
+
+function isNearCenter() {
   if (!bothPricesKnown()) return false;
-  if (secondsLeftInMarket() < MIN_SECONDS_LEFT_TO_ARM) return false;
+
+  const yesMid = getMid('YES');
+  const noMid = getMid('NO');
+
+  const yesCentered = yesMid >= CENTER_LOW && yesMid <= CENTER_HIGH;
+  const noCentered = noMid >= CENTER_LOW && noMid <= CENTER_HIGH;
+
+  return yesCentered && noCentered;
+}
+
+function ordersWouldBeResting() {
+  if (!bothPricesKnown()) return false;
 
   return (
-    currentAsks.YES > TARGET_BID + ARM_BUFFER &&
-    currentAsks.NO > TARGET_BID + ARM_BUFFER
+    currentAsks.YES > TARGET_BID + MIN_ASK_ABOVE_TARGET &&
+    currentAsks.NO > TARGET_BID + MIN_ASK_ABOVE_TARGET
   );
+}
+
+function getArmBlockReason() {
+  if (!bothPricesKnown()) {
+    return 'WAITING_FOR_FULL_PRICE_DATA';
+  }
+
+  if (secondsLeftInMarket() < MIN_SECONDS_LEFT_TO_ARM) {
+    return 'NOT_ARMED_TOO_CLOSE_TO_MARKET_END';
+  }
+
+  if (!isNearCenter()) {
+    return 'NOT_ARMED_NOT_NEAR_50_50_CENTER';
+  }
+
+  if (!ordersWouldBeResting()) {
+    return 'NOT_ARMED_ORDER_WOULD_CROSS_NOT_REST';
+  }
+
+  return null;
+}
+
+function canArmRestingLimitOrders() {
+  return getArmBlockReason() === null;
 }
 
 function getReadableStatus() {
   if (arbState.status === 'WAITING_TO_ARM') {
-    return 'WAITING TO PLACE LIMIT ORDERS';
+    return 'WAITING FOR 50/50 CENTRE';
   }
 
   if (arbState.status === 'WAITING_FIRST_FILL') {
@@ -205,17 +263,14 @@ function getReadableStatus() {
   return arbState.status;
 }
 
-function fmtPrice(value) {
-  return value > 0 ? value.toFixed(3) : '---';
-}
-
 function tryArmRestingLimitOrders() {
   if (arbState.status !== 'WAITING_TO_ARM') return;
   if (ONE_TRADE_PER_MARKET && completedMarketSlugs.has(currentMarketSlug)) return;
-  if (!bothPricesKnown()) return;
 
-  if (!canArmRestingLimitOrders()) {
-    arbState.lastAction = 'NOT_ARMED_ALREADY_THROUGH_OR_TOO_LATE';
+  const blockReason = getArmBlockReason();
+
+  if (blockReason) {
+    arbState.lastAction = blockReason;
     return;
   }
 
@@ -224,12 +279,13 @@ function tryArmRestingLimitOrders() {
     YES: true,
     NO: true
   };
-  arbState.lastAction = 'RESTING_LIMIT_BIDS_ARMED';
+  arbState.lastAction = 'RESTING_LIMIT_BIDS_ARMED_NEAR_CENTER';
 
   console.log(
-    `${colors.magenta}[ORDERS LIVE] Simulated limit buys placed at $${TARGET_BID.toFixed(2)} ` +
-    `on YES and NO. Current prices: YES ask $${currentAsks.YES.toFixed(3)}, ` +
-    `NO ask $${currentAsks.NO.toFixed(3)}.${colors.reset}`
+    `${colors.magenta}[ORDERS LIVE] Market is near 50/50. ` +
+    `Simulated limit buys placed at $${TARGET_BID.toFixed(2)} on YES and NO. ` +
+    `YES ask $${currentAsks.YES.toFixed(3)}, bid $${currentBids.YES.toFixed(3)}, mid $${fmtMid('YES')} | ` +
+    `NO ask $${currentAsks.NO.toFixed(3)}, bid $${currentBids.NO.toFixed(3)}, mid $${fmtMid('NO')}.${colors.reset}`
   );
 }
 
@@ -346,6 +402,7 @@ function fillSecondLeg(side) {
   arbState.status = 'LOCKED';
 
   const payoutShares = Math.min(arbState.yesShares, arbState.noShares);
+
   const totalCost =
     (arbState.yesShares * arbState.yesFillPrice) +
     (arbState.noShares * arbState.noFillPrice);
@@ -367,6 +424,7 @@ function bailoutUnmatchedLeg(reason) {
   if (!side) return;
 
   const shares = side === 'YES' ? arbState.yesShares : arbState.noShares;
+
   const entryPrice = side === 'YES'
     ? arbState.yesFillPrice
     : arbState.noFillPrice;
@@ -431,7 +489,10 @@ function handleMarketUpdate(data) {
   }
 
   if (arbState.status === 'WAITING_FIRST_FILL') {
-    // Valid only because the order was armed earlier when ask was ABOVE target.
+    // Valid only because the order was armed earlier when:
+    // 1. market was near 50/50 centre
+    // 2. both asks were above the 0.49 target
+    //
     // Therefore, a later bestAsk <= target represents price moving down into our resting bid.
     if (arbState.orderResting[side] && bestAsk <= TARGET_BID) {
       fillFirstLeg(side);
@@ -569,8 +630,10 @@ async function loadNextMarket() {
     console.log(`${colors.brightYellow}[MARKET LOADED] ${event.title}${colors.reset}`);
 
     console.log(
-      `${colors.magenta}[PAPER STRATEGY] Waiting to place simulated limit orders. ` +
-      `Orders only go live when BOTH asks are above $${(TARGET_BID + ARM_BUFFER).toFixed(2)}.${colors.reset}`
+      `${colors.magenta}[PAPER STRATEGY] Waiting for true 50/50 centre. ` +
+      `Orders only go live when YES and NO mids are both between ` +
+      `${CENTER_LOW.toFixed(2)} and ${CENTER_HIGH.toFixed(2)}, ` +
+      `and both asks are above $${TARGET_BID.toFixed(2)}.${colors.reset}`
     );
 
     connectWebsocket();
@@ -621,12 +684,13 @@ http.createServer((req, res) => {
 // -----------------------------------------------------------------------------
 async function runLiveTrader() {
   console.log(
-    `${colors.magenta}Booting BTC 5m corrected resting-limit sequential arb PAPER engine...${colors.reset}`
+    `${colors.magenta}Booting BTC 5m 50/50-centre sequential arb PAPER engine...${colors.reset}`
   );
 
   console.log(
-    `${colors.gray}Rule: wait until both asks > ${(TARGET_BID + ARM_BUFFER).toFixed(2)}, ` +
-    `then place simulated resting bids at ${TARGET_BID}. ` +
+    `${colors.gray}Rule: only arm around true 50/50 centre. ` +
+    `YES and NO mids must both be between ${CENTER_LOW.toFixed(2)} and ${CENTER_HIGH.toFixed(2)}. ` +
+    `Then place simulated resting bids at ${TARGET_BID}. ` +
     `If one fills, the other has ${SECOND_LEG_TIMEOUT_MS / 1000}s to fill.${colors.reset}`
   );
 
@@ -680,7 +744,9 @@ async function runLiveTrader() {
         `${currentAsks.YES.toFixed(3)},` +
         `${currentAsks.NO.toFixed(3)},` +
         `${currentBids.YES.toFixed(3)},` +
-        `${currentBids.NO.toFixed(3)}\n`
+        `${currentBids.NO.toFixed(3)},` +
+        `${getMid('YES').toFixed(3)},` +
+        `${getMid('NO').toFixed(3)}\n`
       );
     }
 
@@ -693,16 +759,20 @@ async function runLiveTrader() {
 
       const yesAsk = fmtPrice(currentAsks.YES);
       const yesBid = fmtPrice(currentBids.YES);
+      const yesMid = fmtMid('YES');
+
       const noAsk = fmtPrice(currentAsks.NO);
       const noBid = fmtPrice(currentBids.NO);
+      const noMid = fmtMid('NO');
 
       console.log(
         `${colors.gray}[LIVE] ${readableStatus} | ` +
         `${secondsLeftInMarket()}s left | ` +
         `Timeout ${timeoutRemaining}s | ` +
         `Bal $${stats.currentBalance.toFixed(2)} | ` +
-        `YES ask ${yesAsk}, bid ${yesBid} | ` +
-        `NO ask ${noAsk}, bid ${noBid} | ` +
+        `YES ask ${yesAsk}, bid ${yesBid}, mid ${yesMid} | ` +
+        `NO ask ${noAsk}, bid ${noBid}, mid ${noMid} | ` +
+        `Centre ${CENTER_LOW.toFixed(2)}-${CENTER_HIGH.toFixed(2)} | ` +
         `Target $${TARGET_BID.toFixed(2)} | ` +
         `Last ${arbState.lastAction || '-'}${colors.reset}`
       );
@@ -711,3 +781,4 @@ async function runLiveTrader() {
 }
 
 runLiveTrader().catch(console.error);
+``
