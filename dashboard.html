@@ -8,28 +8,15 @@
   <style>
     :root {
       --bg: #050505;
-
-      /* blue gradient cards */
-      --card-top: rgba(14, 165, 233, 0.14);
-      --card-bottom: rgba(30, 58, 138, 0.10); /* deep blue */
-      --card-solid: rgba(18, 18, 22, 0.70);
-
-      --border: rgba(14,165,233,0.20);
+      --card: rgba(18,18,22,0.75);
+      --border: rgba(14,165,233,0.18);
       --text: #f1f5f9;
-      --muted: #94a3b8;
-
+      --muted: #64748b;
       --cyan: #0ea5e9;
       --green: #10b981;
       --red: #ef4444;
-
-      /* gold gradient text */
-      --gold-1: #f59e0b;
-      --gold-2: #fcd34d;
-      --gold-3: #fef08a;
-      --gold-glow: rgba(252, 211, 77, 0.35);
-
-      /* numeric font (less "smooth") */
-      --money: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --yellow: #facc15;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -37,8 +24,8 @@
       margin: 0;
       padding: 24px 14px;
       background:
-        radial-gradient(circle at top right, rgba(14,165,233,0.10), transparent 38%),
-        radial-gradient(circle at bottom left, rgba(245,158,11,0.07), transparent 38%),
+        radial-gradient(circle at top right, rgba(14,165,233,0.08), transparent 35%),
+        radial-gradient(circle at bottom left, rgba(16,185,129,0.06), transparent 35%),
         var(--bg);
       color: var(--text);
       font-family: var(--ui);
@@ -49,27 +36,19 @@
       margin: 0 auto;
     }
 
-    .gold-text {
-      background: linear-gradient(90deg, var(--gold-1), var(--gold-2), var(--gold-3));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      display: inline-block;
-      text-shadow: 0 0 18px rgba(252, 211, 77, 0.08);
-    }
-
     .title {
       text-align: center;
       font-weight: 900;
       letter-spacing: 1.4px;
       margin-bottom: 18px;
       font-size: 1.45rem;
+      background: linear-gradient(90deg, #f59e0b, #fcd34d, #fef08a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     .card {
-      background:
-        radial-gradient(circle at top, rgba(14,165,233,0.14), transparent 55%),
-        linear-gradient(180deg, var(--card-top), var(--card-bottom)),
-        var(--card-solid);
+      background: var(--card);
       border: 1px solid var(--border);
       border-radius: 18px;
       padding: 16px;
@@ -91,14 +70,8 @@
       margin-bottom: 8px;
     }
 
-    /* numbers */
-    .num {
-      font-family: var(--money);
-      font-variant-numeric: tabular-nums lining-nums;
-      letter-spacing: 0;
-    }
-
     .balance {
+      font-family: var(--mono);
       font-size: 3rem;
       font-weight: 800;
     }
@@ -108,22 +81,21 @@
       margin-top: 10px;
       padding: 8px 14px;
       border-radius: 999px;
+      font-family: var(--mono);
       font-weight: 800;
       font-size: 0.95rem;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(0,0,0,0.18);
     }
 
     .roi.green {
       color: #34d399;
-      border-color: rgba(16,185,129,0.35);
       background: rgba(16,185,129,0.14);
+      border: 1px solid rgba(16,185,129,0.35);
     }
 
     .roi.red {
       color: #f87171;
-      border-color: rgba(239,68,68,0.35);
       background: rgba(239,68,68,0.14);
+      border: 1px solid rgba(239,68,68,0.35);
     }
 
     .grid {
@@ -142,22 +114,10 @@
       color: var(--muted);
       letter-spacing: 1.2px;
       text-transform: uppercase;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    h2::before {
-      content: "";
-      width: 5px;
-      height: 5px;
-      border-radius: 999px;
-      background: var(--gold-2);
-      box-shadow: 0 0 10px var(--gold-glow);
-      flex: 0 0 auto;
     }
 
     .metric {
+      font-family: var(--mono);
       font-size: 1.55rem;
       font-weight: 800;
     }
@@ -166,6 +126,7 @@
       color: var(--muted);
       font-size: 0.82rem;
       margin-top: 4px;
+      font-family: var(--mono);
       word-break: break-word;
     }
 
@@ -181,8 +142,8 @@
       width: 9px;
       height: 9px;
       border-radius: 999px;
-      background: var(--gold-2);
-      box-shadow: 0 0 12px var(--gold-glow);
+      background: var(--yellow);
+      box-shadow: 0 0 12px rgba(250,204,21,0.55);
       animation: blink 1.4s infinite;
       flex-shrink: 0;
     }
@@ -206,14 +167,16 @@
     }
 
     .book-card {
-      background: rgba(0,0,0,0.22);
+      background: rgba(0,0,0,0.24);
       border: 1px solid rgba(255,255,255,0.06);
       padding: 12px;
       border-radius: 14px;
+      font-family: var(--mono);
     }
 
     .label {
       color: var(--muted);
+      font-family: var(--ui);
       font-size: 0.73rem;
       letter-spacing: 1px;
       text-transform: uppercase;
@@ -223,27 +186,26 @@
     .cyan { color: var(--cyan); }
     .green-text { color: var(--green); }
     .red-text { color: var(--red); }
+    .yellow-text { color: var(--yellow); }
 
     .mode-pill {
       display: inline-block;
       padding: 4px 10px;
       border-radius: 999px;
+      font-family: var(--mono);
       font-size: 0.78rem;
       font-weight: 900;
       margin-left: 6px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.1);
     }
 
     .mode-paper {
       color: #93c5fd;
-      border-color: rgba(147, 197, 253, 0.25);
       background: rgba(59,130,246,0.12);
     }
 
     .mode-live {
       color: #f87171;
-      border-color: rgba(248, 113, 113, 0.28);
       background: rgba(239,68,68,0.13);
     }
 
@@ -253,6 +215,7 @@
       gap: 12px;
       padding: 10px 0;
       border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-family: var(--mono);
     }
 
     .ledger-row:last-child {
@@ -262,6 +225,7 @@
     .empty {
       text-align: center;
       color: var(--muted);
+      font-family: var(--mono);
       padding: 18px 0;
     }
   </style>
@@ -269,89 +233,73 @@
 
 <body>
   <div class="container">
-    <div class="title gold-text">PolyBot Terminal</div>
+    <div class="title">PolyBot Terminal</div>
 
     <div class="card hero">
       <div class="sub">Portfolio</div>
-      <div id="balance" class="balance num gold-text">$0</div>
-      <div id="roi" class="roi green num">+0% ROI</div>
+      <div id="balance" class="balance">$0.00</div>
+      <div id="roi" class="roi green">+0.00% ROI</div>
     </div>
 
     <div class="grid">
       <div class="card full">
-        <h2><span class="gold-text">Engine Status</span> <span id="modePill" class="mode-pill mode-paper">Paper</span></h2>
+        <h2>Engine Status <span id="mode-pill" class="mode-pill mode-paper">PAPER</span></h2>
         <div class="status-line">
           <div id="pulse" class="pulse"></div>
-          <div id="status" class="gold-text">Initializing</div>
+          <div id="status">INITIALISING</div>
         </div>
-        <div id="lastAction" class="small">Last action: —</div>
+        <div id="last-action" class="small">Last: -</div>
 
         <div class="book">
           <div class="book-card">
-            <div class="label">Yes Book</div>
-            <div>Ask: <span id="yesAsk" class="cyan num">—</span></div>
-            <div>Bid: <span id="yesBid" class="num">—</span></div>
-            <div>Spread: <span id="yesSpread" class="num">—</span></div>
+            <div class="label">YES Book</div>
+            <div>Ask: <span id="yes-ask" class="cyan">---</span></div>
+            <div>Bid: <span id="yes-bid">---</span></div>
+            <div>Spread: <span id="yes-spread">---</span></div>
           </div>
 
           <div class="book-card">
-            <div class="label">No Book</div>
-            <div>Ask: <span id="noAsk" class="cyan num">—</span></div>
-            <div>Bid: <span id="noBid" class="num">—</span></div>
-            <div>Spread: <span id="noSpread" class="num">—</span></div>
+            <div class="label">NO Book</div>
+            <div>Ask: <span id="no-ask" class="cyan">---</span></div>
+            <div>Bid: <span id="no-bid">---</span></div>
+            <div>Spread: <span id="no-spread">---</span></div>
           </div>
         </div>
 
         <div class="small" style="margin-top: 10px;">
-          Ask sum: <span id="askSum" class="num">—</span> |
-          Bid sum: <span id="bidSum" class="num">—</span>
+          AskSum: <span id="ask-sum">---</span> |
+          BidSum: <span id="bid-sum">---</span>
         </div>
       </div>
 
       <div class="card">
-        <h2><span class="gold-text">Win Rate</span></h2>
-        <div id="winRate" class="metric cyan num">0%</div>
-        <div id="winDetails" class="small num">0 wins / 0 losses</div>
+        <h2>Win Rate</h2>
+        <div id="win-rate" class="metric cyan">0.0%</div>
+        <div id="win-details" class="small">0W / 0L</div>
       </div>
 
       <div class="card">
-        <h2><span class="gold-text">Executions</span></h2>
-        <div id="totalTrades" class="metric num gold-text">0</div>
+        <h2>Executions</h2>
+        <div id="total-trades" class="metric yellow-text">0</div>
         <div class="small">Resolved trades</div>
       </div>
 
       <div class="card full">
-        <h2><span class="gold-text">Trade Ledger</span></h2>
-        <div id="history" class="empty">Waiting for executions…</div>
+        <h2>Trade Ledger</h2>
+        <div id="history" class="empty">Awaiting executions...</div>
       </div>
     </div>
   </div>
 
   <script>
-    // whole-number formatting (no 0.02 style)
-    function whole(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return '—';
-      return String(Math.round(n));
+    function cents(value) {
+      if (!value || Number(value) <= 0) return '---';
+      return Math.round(Number(value) * 100) + '¢';
     }
 
-    // price to whole cents (e.g., $0.52 -> 52¢, but as a whole number)
-    function wholeCents(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return '—';
-      return String(Math.round(n * 100)) + '¢';
-    }
-
-    // whole dollars (e.g., 1012.49 -> $1,012)
-    function wholeDollars(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return '$0';
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-      }).format(Math.round(n));
+    function dec(value) {
+      if (!value || Number(value) <= 0) return '---';
+      return Number(value).toFixed(3);
     }
 
     async function updateDashboard() {
@@ -365,93 +313,73 @@
         const yes = book.YES || {};
         const no = book.NO || {};
 
-        // Balance: whole dollars
         document.getElementById('balance').innerText =
-          wholeDollars(stats.currentBalance || 0);
+          '$' + Number(stats.currentBalance || 0).toFixed(2);
 
-        // ROI: whole percent
         const roi =
           stats.startingBalance
             ? (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100)
             : 0;
 
         const roiEl = document.getElementById('roi');
-        roiEl.innerText = (roi >= 0 ? '+' : '') + whole(roi) + '% ROI';
-        roiEl.className = 'roi ' + (roi >= 0 ? 'green' : 'red') + ' num';
+        roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
+        roiEl.className = 'roi ' + (roi >= 0 ? 'green' : 'red');
 
-        // Win rate: whole percent, better grammar
         const winRate =
           stats.totalTrades > 0
-            ? (stats.wins / stats.totalTrades) * 100
-            : 0;
+            ? ((stats.wins / stats.totalTrades) * 100).toFixed(1)
+            : '0.0';
 
-        document.getElementById('winRate').innerText = whole(winRate) + '%';
-        document.getElementById('winDetails').innerText =
-          `${whole(stats.wins || 0)} wins / ${whole(stats.losses || 0)} losses`;
+        document.getElementById('win-rate').innerText = winRate + '%';
+        document.getElementById('win-details').innerText =
+          `${stats.wins || 0}W / ${stats.losses || 0}L`;
+        document.getElementById('total-trades').innerText = stats.totalTrades || 0;
 
-        document.getElementById('totalTrades').innerText = whole(stats.totalTrades || 0);
-
-        // Mode pill: nice capitalization
-        const mode = String(data.mode || 'paper').toUpperCase();
-        const modePill = document.getElementById('modePill');
-        modePill.innerText = mode === 'LIVE' ? 'Live' : 'Paper';
+        const mode = (data.mode || 'paper').toUpperCase();
+        const modePill = document.getElementById('mode-pill');
+        modePill.innerText = mode;
         modePill.className = 'mode-pill ' + (mode === 'LIVE' ? 'mode-live' : 'mode-paper');
 
-        // Status: no underscores; make it readable
-        const rawStatus = trade.readableStatus || trade.status || 'UNKNOWN';
-        const readableStatus = String(rawStatus)
-          .replace(/[_-]+/g, ' ')
-          .toLowerCase()
-          .replace(/\b\w/g, c => c.toUpperCase());
+        document.getElementById('status').innerText =
+          trade.readableStatus || trade.status || 'UNKNOWN';
 
-        document.getElementById('status').innerText = readableStatus;
-
-        // Last action: nicer punctuation; remove underscores
-        const last = trade.lastAction
-          ? String(trade.lastAction).replace(/[_-]+/g, ' ')
-          : '—';
-        document.getElementById('lastAction').innerText = 'Last action: ' + last;
+        document.getElementById('last-action').innerText =
+          'Last: ' + (trade.lastAction || '-');
 
         document.getElementById('pulse').className =
           trade.active ? 'pulse active' : 'pulse';
 
-        // Books: whole cents + whole-number spreads
-        document.getElementById('yesAsk').innerText = wholeCents(yes.ask);
-        document.getElementById('yesBid').innerText = wholeCents(yes.bid);
-        document.getElementById('yesSpread').innerText = whole(yes.spread);
+        document.getElementById('yes-ask').innerText = cents(yes.ask);
+        document.getElementById('yes-bid').innerText = cents(yes.bid);
+        document.getElementById('yes-spread').innerText = dec(yes.spread);
 
-        document.getElementById('noAsk').innerText = wholeCents(no.ask);
-        document.getElementById('noBid').innerText = wholeCents(no.bid);
-        document.getElementById('noSpread').innerText = whole(no.spread);
+        document.getElementById('no-ask').innerText = cents(no.ask);
+        document.getElementById('no-bid').innerText = cents(no.bid);
+        document.getElementById('no-spread').innerText = dec(no.spread);
 
-        document.getElementById('askSum').innerText = whole(book.askSum);
-        document.getElementById('bidSum').innerText = whole(book.bidSum);
+        document.getElementById('ask-sum').innerText = dec(book.askSum);
+        document.getElementById('bid-sum').innerText = dec(book.bidSum);
 
-        // History: PnL as whole dollars (clean, readable)
         const history = data.recentTrades || [];
         const historyEl = document.getElementById('history');
 
         if (!history.length) {
           historyEl.className = 'empty';
-          historyEl.innerText = 'Waiting for executions…';
+          historyEl.innerText = 'Awaiting executions...';
         } else {
           historyEl.className = '';
           historyEl.innerHTML = history.map(t => {
             const pnl = Number(t.pnl || 0);
             const cls = pnl >= 0 ? 'green-text' : 'red-text';
-            const sign = pnl >= 0 ? '+' : '−';
-
-            const reason = String(t.reason || '')
-              .replace(/[_-]+/g, ' ')
-              .trim();
+            const sign = pnl >= 0 ? '+' : '';
 
             return `
               <div class="ledger-row">
                 <div>
-                  <div class="num">${t.time || ''}</div>
-                  <div class="small">${reason}</div>
+                  <div>${t.time || ''}</div>
+                  <div class="small">${t.reason || ''}</div>
                 </div>
-                <div class="${cls} num">${sign}${wholeDollars(Math.abs(pnl))}</div>
+                <div class="${cls}">${sign}$${Math.abs(pnl).toFixed(4)}</div>
               </div>
             `;
           }).join('');
