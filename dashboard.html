@@ -1,484 +1,464 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PolyBot Terminal</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=Ubuntu+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-main: #050505;
-            --card-bg: rgba(18, 18, 22, 0.65);
-            --card-border: rgba(14, 165, 233, 0.15);
-            --text-main: #f1f5f9;
-            --text-muted: #64748b;
-            --accent-cyan: #0ea5e9;
-            --accent-cyan-glow: rgba(14, 165, 233, 0.4);
-            --accent-green: #10b981;
-            --accent-red: #ef4444;
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <title>PolyBot Terminal</title>
 
-            /* Gold accents */
-            --accent-gold-1: #f59e0b;
-            --accent-gold-2: #fcd34d;
-            --accent-gold-3: #fef08a;
-            --accent-gold-glow: rgba(252, 211, 77, 0.35);
+  <style>
+    :root {
+      --bg: #050505;
+      --card: rgba(18,18,22,0.75);
+      --border: rgba(14,165,233,0.18);
+      --text: #f1f5f9;
+      --muted: #64748b;
+      --cyan: #0ea5e9;
+      --green: #10b981;
+      --red: #ef4444;
+      --yellow: #facc15;
 
-            --font-ui: 'Inter', sans-serif;
-            --font-mono: 'Ubuntu Mono', monospace;
+      /* pleasant gold accents */
+      --gold-1: #f59e0b;
+      --gold-2: #fcd34d;
+      --gold-3: #fef08a;
+      --gold-glow: rgba(252, 211, 77, 0.35);
 
-            /* Use a more "monetary" looking numeric face (tabular lining figures) */
-            --font-money: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        }
+      /* numeric fonts (avoid smooth/long UI font for numbers) */
+      --money: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
 
-        body {
-            font-family: var(--font-ui);
-            background-color: var(--bg-main);
-            background-image:
-                radial-gradient(circle at top right, rgba(252, 211, 77, 0.06), transparent 42%),
-                radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.05), transparent 40%),
-                radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.04), transparent 45%);
-            color: var(--text-main);
-            margin: 0;
-            padding: 24px 16px;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
+    body {
+      margin: 0;
+      padding: 24px 14px;
+      background:
+        radial-gradient(circle at top right, rgba(252,211,77,0.07), transparent 40%),
+        radial-gradient(circle at top right, rgba(14,165,233,0.08), transparent 35%),
+        radial-gradient(circle at bottom left, rgba(16,185,129,0.06), transparent 35%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--ui);
+    }
 
-        .container {
-            width: 100%;
-            max-width: 600px;
-        }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
 
-        .header-container {
-            text-align: center;
-            margin-bottom: 24px;
-            animation: fadeDown 0.6s ease-out;
-            display: flex;
-            justify-content: center;
-        }
+    .title {
+      text-align: center;
+      font-weight: 900;
+      letter-spacing: 1.4px;
+      margin-bottom: 18px;
+      font-size: 1.45rem;
+      background: linear-gradient(90deg, var(--gold-1), var(--gold-2), var(--gold-3));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
 
-        /* Reusable Gold Gradient Class */
-        .gold-gradient-text {
-            background: linear-gradient(90deg, var(--accent-gold-1), var(--accent-gold-2), var(--accent-gold-3));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            display: inline-block;
-        }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.22);
+    }
 
-        /* Subtle gold gradient border (pleasant, not loud) */
-        .gold-gradient-border {
-            border: 1px solid transparent;
-            background:
-                linear-gradient(var(--card-bg), var(--card-bg)) padding-box,
-                linear-gradient(135deg, rgba(245, 158, 11, 0.35), rgba(252, 211, 77, 0.25), rgba(254, 240, 138, 0.10)) border-box;
-        }
+    /* subtle gold gradient border where it matters (hero + engine status) */
+    .card.gold {
+      border: 1px solid transparent;
+      background:
+        linear-gradient(var(--card), var(--card)) padding-box,
+        linear-gradient(135deg, rgba(245,158,11,0.40), rgba(252,211,77,0.26), rgba(254,240,138,0.10)) border-box;
+    }
 
-        /* Numeric styling for monetary-looking numbers */
-        .money-num {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            letter-spacing: 0;
-        }
+    .hero {
+      text-align: center;
+      padding: 24px 16px;
+      background:
+        radial-gradient(circle at top, rgba(252,211,77,0.06), transparent 55%),
+        var(--card);
+    }
 
-        .header-container h1 {
-            font-weight: 800;
-            margin: 0;
-            font-size: 1.5rem;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-        }
+    .sub {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
 
-        .hero-section {
-            text-align: center;
-            padding: 28px 20px 32px 20px;
-            background: linear-gradient(180deg, rgba(252, 211, 77, 0.12) 0%, rgba(22, 27, 34, 0) 100%);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-radius: 24px;
-            margin-bottom: 16px;
-            animation: fadeUp 0.6s ease-out;
-            box-shadow: 0 10px 40px -10px rgba(0,0,0,0.5);
-            position: relative;
-            overflow: hidden;
-            box-sizing: border-box;
-        }
+    /* money numbers */
+    .money {
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      letter-spacing: 0;
+    }
 
-        .hero-subheading {
-            color: var(--accent-cyan);
-            font-size: 0.9rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 8px;
-        }
+    .balance {
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 3rem;
+      font-weight: 800;
+    }
 
-        .balance-display {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            font-size: 3.2rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            text-shadow: 0 0 20px rgba(255,255,255,0.1);
-            letter-spacing: -1px;
-        }
+    .roi {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-weight: 800;
+      font-size: 0.95rem;
+    }
 
-        /* Upgraded ROI Subcard */
-        .roi-subcard {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            padding: 10px 20px;
-            border-radius: 16px;
-            font-size: 1rem;
-            font-weight: 700;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            letter-spacing: 0.2px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            transition: all 0.3s ease;
-        }
-        .roi-green {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(16, 185, 129, 0.05));
-            border: 1px solid rgba(16, 185, 129, 0.4);
-            color: #34d399;
-            text-shadow: 0 0 10px rgba(16,185,129,0.3);
-        }
-        .roi-red {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(239, 68, 68, 0.05));
-            border: 1px solid rgba(239, 68, 68, 0.4);
-            color: #f87171;
-            text-shadow: 0 0 10px rgba(239,68,68,0.3);
-        }
+    .roi.green {
+      color: #34d399;
+      background: rgba(16,185,129,0.14);
+      border: 1px solid rgba(16,185,129,0.35);
+    }
 
-        .grid-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 16px;
-            animation: fadeUp 0.8s ease-out;
-        }
+    .roi.red {
+      color: #f87171;
+      background: rgba(239,68,68,0.14);
+      border: 1px solid rgba(239,68,68,0.35);
+    }
 
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 16px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-        }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
 
-        .card:hover {
-            border-color: rgba(252, 211, 77, 0.35);
-            box-shadow: 0 8px 32px rgba(252, 211, 77, 0.06);
-        }
+    .full {
+      grid-column: 1 / -1;
+    }
 
-        .card.full-width { grid-column: 1 / -1; }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
-        /* Replaced borders with clean indicator dots */
-        .card h2 {
-            margin-top: 0;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+    /* add a small gold dot to headings for a nicer look */
+    h2::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--gold-2);
+      box-shadow: 0 0 10px var(--gold-glow);
+      flex: 0 0 auto;
+    }
 
-        .card h2::before {
-            content: '';
-            display: block;
-            width: 4px;
-            height: 4px;
-            border-radius: 50%;
-            background-color: var(--accent-gold-2);
-            box-shadow: 0 0 10px var(--accent-gold-glow);
-        }
+    .metric {
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 1.55rem;
+      font-weight: 800;
+    }
 
-        .metric-value {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            font-size: 1.6rem;
-            font-weight: 700;
-            letter-spacing: -0.25px;
-        }
+    .small {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-top: 4px;
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      word-break: break-word;
+    }
 
-        #winrate-pct { color: var(--accent-cyan); }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 1.03rem;
+    }
 
-        .metric-sub {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            margin-top: 4px;
-        }
+    .pulse {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--gold-2);
+      box-shadow: 0 0 12px var(--gold-glow);
+      animation: blink 1.4s infinite;
+      flex-shrink: 0;
+    }
 
-        .green { color: var(--accent-green); }
-        .red { color: var(--accent-red); }
-        .cyan { color: var(--accent-cyan); }
-        .font-mono { font-family: var(--font-mono); }
+    .pulse.active {
+      background: var(--cyan);
+      box-shadow: 0 0 12px rgba(14,165,233,0.65);
+    }
 
-        .market-prices {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.95rem;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px dashed rgba(255,255,255,0.05);
-        }
+    @keyframes blink {
+      0% { opacity: 0.35; }
+      50% { opacity: 1; }
+      100% { opacity: 0.35; }
+    }
 
-        .price-tag {
-            background: rgba(0,0,0,0.3);
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            font-size: 0.9rem;
-            border: 1px solid rgba(255,255,255,0.05);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+    .book {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
 
-        .trade-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 0.9rem;
-            padding: 12px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-        }
-        .trade-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .book-card {
+      background: rgba(0,0,0,0.24);
+      border: 1px solid rgba(255,255,255,0.06);
+      padding: 12px;
+      border-radius: 14px;
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+    }
 
-        .trade-time {
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            margin-bottom: 4px;
-            letter-spacing: 0.5px;
-        }
+    .label {
+      color: var(--muted);
+      font-family: var(--ui);
+      font-size: 0.73rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
 
-        .trade-reason {
-            font-weight: 600;
-            font-size: 0.85rem;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
+    .cyan { color: var(--cyan); }
+    .green-text { color: var(--green); }
+    .red-text { color: var(--red); }
+    .yellow-text { color: var(--yellow); }
 
-        .trade-metrics {
-            text-align: right;
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-        }
+    .mode-pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 0.78rem;
+      font-weight: 900;
+      margin-left: 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
 
-        .trade-route {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            margin-bottom: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 6px;
-        }
+    .mode-paper {
+      color: #93c5fd;
+      background: rgba(59,130,246,0.12);
+    }
 
-        .pnl-display {
-            font-size: 1rem;
-            font-weight: 700;
-        }
+    .mode-live {
+      color: #f87171;
+      background: rgba(239,68,68,0.13);
+    }
 
-        .empty-history {
-            opacity: 0.8;
-            font-size: 0.9rem;
-            text-align: center;
-            padding: 16px 0;
-            font-family: var(--font-money);
-            font-variant-numeric: tabular-nums lining-nums;
-        }
+    .ledger-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+    }
 
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeDown {
-            from { opacity: 0; transform: translateY(-15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+    .ledger-row:last-child {
+      border-bottom: none;
+    }
 
-        .pulse {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 10px;
-            background: var(--accent-gold-2);
-            box-shadow: 0 0 12px var(--accent-gold-glow);
-            animation: blink 1.5s infinite;
-        }
-        .pulse.active {
-            background: var(--accent-cyan);
-            box-shadow: 0 0 12px var(--accent-cyan-glow);
-        }
-        @keyframes blink { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
-    </style>
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      font-family: var(--money);
+      font-variant-numeric: tabular-nums lining-nums;
+      padding: 18px 0;
+    }
+  </style>
 </head>
+
 <body>
-    <div class="container">
-        <div class="header-container">
-            <h1 class="gold-gradient-text">PolyBot Terminal</h1>
-        </div>
+  <div class="container">
+    <div class="title">PolyBot Terminal</div>
 
-        <div class="hero-section gold-gradient-border">
-            <div class="hero-subheading">PORTFOLIO</div>
-            <div class="balance-display money-num" id="balance">$0.00</div>
-            <div id="roi" class="roi-subcard roi-green money-num">0.00% ROI</div>
-        </div>
-
-        <div class="grid-container">
-            <div class="card full-width gold-gradient-border">
-                <h2>Algo Status</h2>
-                <div class="metric-value" style="font-size: 1.2rem; display: flex; align-items: center;">
-                    <div id="pulse-indicator" class="pulse"></div>
-                    <span id="status" class="gold-gradient-text" style="letter-spacing: 0.5px;">INITIALIZING SYSTEMS...</span>
-                </div>
-                <div class="market-prices">
-                    <div class="price-tag"><span class="text-muted">YES</span> <span id="yes-price" class="cyan money-num">$0.00</span></div>
-                    <div class="price-tag"><span class="text-muted">NO</span> <span id="no-price" class="gold-gradient-text money-num">$0.00</span></div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Win/Loss Ratio</h2>
-                <div id="winrate-pct" class="metric-value money-num">0.0%</div>
-                <div id="winrate-details" class="metric-sub money-num">0W / 0L</div>
-            </div>
-
-            <div class="card">
-                <h2>Executions</h2>
-                <div id="total-trades" class="metric-value gold-gradient-text money-num" style="display: block;">0</div>
-                <div class="metric-sub">Total Settled</div>
-            </div>
-
-            <div class="card full-width" style="animation-delay: 0.1s;">
-                <h2>Trade Ledger</h2>
-                <div id="history">
-                    <div class="empty-history gold-gradient-text">Awaiting execution signals...</div>
-                </div>
-            </div>
-        </div>
+    <div class="card hero gold">
+      <div class="sub">Portfolio</div>
+      <div id="balance" class="balance money">$0.00</div>
+      <div id="roi" class="roi green money">+0.00% ROI</div>
     </div>
 
-    <script>
-        function formatMoney(amount, currency = 'USD') {
-            const n = Number(amount);
-            if (!Number.isFinite(n)) return '$0.00';
-            return new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency,
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-            }).format(n);
+    <div class="grid">
+      <div class="card full gold">
+        <h2>Engine Status <span id="mode-pill" class="mode-pill mode-paper">PAPER</span></h2>
+        <div class="status-line">
+          <div id="pulse" class="pulse"></div>
+          <div id="status">INITIALISING</div>
+        </div>
+        <div id="last-action" class="small">Last: -</div>
+
+        <div class="book">
+          <div class="book-card">
+            <div class="label">YES Book</div>
+            <div>Ask: <span id="yes-ask" class="cyan money">---</span></div>
+            <div>Bid: <span id="yes-bid" class="money">---</span></div>
+            <div>Spread: <span id="yes-spread" class="money">---</span></div>
+          </div>
+
+          <div class="book-card">
+            <div class="label">NO Book</div>
+            <div>Ask: <span id="no-ask" class="cyan money">---</span></div>
+            <div>Bid: <span id="no-bid" class="money">---</span></div>
+            <div>Spread: <span id="no-spread" class="money">---</span></div>
+          </div>
+        </div>
+
+        <div class="small" style="margin-top: 10px;">
+          AskSum: <span id="ask-sum" class="money">---</span> |
+          BidSum: <span id="bid-sum" class="money">---</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Win Rate</h2>
+        <div id="win-rate" class="metric cyan money">0.0%</div>
+        <div id="win-details" class="small money">0W / 0L</div>
+      </div>
+
+      <div class="card">
+        <h2>Executions</h2>
+        <div id="total-trades" class="metric yellow-text money">0</div>
+        <div class="small">Resolved trades</div>
+      </div>
+
+      <div class="card full">
+        <h2>Trade Ledger</h2>
+        <div id="history" class="empty">Awaiting executions...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // currency / number formatting (monetary look + separators)
+    function money(amount, currency = 'USD') {
+      const n = Number(amount);
+      if (!Number.isFinite(n)) return '$0.00';
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(n);
+    }
+
+    function centsMoney(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return '---';
+      // value is dollars; convert to cents -> dollars again, but keep formatting stable
+      return money(Math.round(n * 100) / 100);
+    }
+
+    function spreadDec(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return '---';
+      return n.toFixed(3);
+    }
+
+    async function updateDashboard() {
+      try {
+        const res = await fetch('/api/live');
+        const data = await res.json();
+
+        const stats = data.stats || {};
+        const trade = data.trade || {};
+        const book = data.currentBook || {};
+        const yes = book.YES || {};
+        const no = book.NO || {};
+
+        // balance: proper money format (and numeric font via CSS class)
+        document.getElementById('balance').innerText =
+          money(stats.currentBalance || 0);
+
+        const roi =
+          stats.startingBalance
+            ? (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100)
+            : 0;
+
+        const roiEl = document.getElementById('roi');
+        roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
+        roiEl.className = 'roi ' + (roi >= 0 ? 'green' : 'red') + ' money';
+
+        const winRate =
+          stats.totalTrades > 0
+            ? ((stats.wins / stats.totalTrades) * 100).toFixed(1)
+            : '0.0';
+
+        document.getElementById('win-rate').innerText = winRate + '%';
+        document.getElementById('win-details').innerText =
+          `${stats.wins || 0}W / ${stats.losses || 0}L`;
+        document.getElementById('total-trades').innerText = stats.totalTrades || 0;
+
+        const mode = (data.mode || 'paper').toUpperCase();
+        const modePill = document.getElementById('mode-pill');
+        modePill.innerText = mode;
+        modePill.className = 'mode-pill ' + (mode === 'LIVE' ? 'mode-live' : 'mode-paper');
+
+        document.getElementById('status').innerText =
+          trade.readableStatus || trade.status || 'UNKNOWN';
+
+        // last-action: keep as-is but ensure any numbers look tabular via .small font
+        document.getElementById('last-action').innerText =
+          'Last: ' + (trade.lastAction || '-');
+
+        document.getElementById('pulse').className =
+          trade.active ? 'pulse active' : 'pulse';
+
+        // book numbers: show as money (not "smooth long fonts" + more monetary feel)
+        document.getElementById('yes-ask').innerText = centsMoney(yes.ask);
+        document.getElementById('yes-bid').innerText = centsMoney(yes.bid);
+        document.getElementById('yes-spread').innerText = spreadDec(yes.spread);
+
+        document.getElementById('no-ask').innerText = centsMoney(no.ask);
+        document.getElementById('no-bid').innerText = centsMoney(no.bid);
+        document.getElementById('no-spread').innerText = spreadDec(no.spread);
+
+        document.getElementById('ask-sum').innerText = spreadDec(book.askSum);
+        document.getElementById('bid-sum').innerText = spreadDec(book.bidSum);
+
+        const history = data.recentTrades || [];
+        const historyEl = document.getElementById('history');
+
+        if (!history.length) {
+          historyEl.className = 'empty';
+          historyEl.innerText = 'Awaiting executions...';
+        } else {
+          historyEl.className = '';
+          historyEl.innerHTML = history.map(t => {
+            const pnl = Number(t.pnl || 0);
+            const cls = pnl >= 0 ? 'green-text' : 'red-text';
+            const sign = pnl >= 0 ? '+' : '';
+
+            return `
+              <div class="ledger-row">
+                <div>
+                  <div>${t.time || ''}</div>
+                  <div class="small">${t.reason || ''}</div>
+                </div>
+                <div class="${cls}">${sign}${money(Math.abs(pnl))}</div>
+              </div>
+            `;
+          }).join('');
         }
+      } catch (e) {
+        console.error('Dashboard sync error', e);
+      }
+    }
 
-        function formatCentsAsMoney(cents) {
-            const n = Number(cents);
-            if (!Number.isFinite(n)) return '$0.00';
-            return formatMoney(n / 100);
-        }
-
-        async function updateDashboard() {
-            try {
-                const res = await fetch('/api/live');
-                const data = await res.json();
-
-                // Update Balance & ROI
-                document.getElementById('balance').innerText = formatMoney(data.stats.currentBalance);
-                const roi = (((data.stats.currentBalance - data.stats.startingBalance) / data.stats.startingBalance) * 100);
-                const roiEl = document.getElementById('roi');
-                roiEl.innerText = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '% ROI';
-                roiEl.className = 'roi-subcard ' + (roi >= 0 ? 'roi-green' : 'roi-red') + ' money-num';
-
-                // Update Stats
-                const wr = data.stats.totalTrades > 0 ? ((data.stats.wins / data.stats.totalTrades) * 100).toFixed(1) : 0;
-                document.getElementById('winrate-pct').innerText = wr + '%';
-                document.getElementById('winrate-details').innerText = data.stats.wins + 'W / ' + data.stats.losses + 'L';
-                document.getElementById('total-trades').innerText = data.stats.totalTrades;
-
-                // Update Status & Prices
-                const statusEl = document.getElementById('status');
-                const pulseEl = document.getElementById('pulse-indicator');
-
-                if (data.trade.active) {
-                    pulseEl.className = 'pulse active';
-                    const entryCents = Math.round(data.trade.entryPrice * 100);
-
-                    // Monetary-looking values (tabular monospace) + currency format
-                    statusEl.innerHTML =
-                        '<span class="cyan">HOLDING ' + data.trade.side + '</span>' +
-                        ' <span style="color:var(--text-muted);font-weight:400;margin-left:8px;">@ ' +
-                        '<span class="money-num">' + formatCentsAsMoney(entryCents) + '</span></span>';
-                    statusEl.className = '';
-                } else {
-                    pulseEl.className = 'pulse';
-                    // Re-apply gold gradient class for awaiting state
-                    statusEl.innerHTML = 'AWAITING SIGNAL';
-                    statusEl.className = 'gold-gradient-text';
-                }
-
-                // Prices: show as currency instead of cents + ensure numeric font
-                document.getElementById('yes-price').innerText = formatCentsAsMoney(Math.round(data.currentPrices.YES * 100));
-                document.getElementById('no-price').innerText = formatCentsAsMoney(Math.round(data.currentPrices.NO * 100));
-
-                // Update History
-                if (data.recentTrades && data.recentTrades.length > 0) {
-                    let html = '';
-                    data.recentTrades.forEach(t => {
-                        const pnlColor = t.pnl > 0 ? 'green' : 'red';
-                        const pnlSign = t.pnl > 0 ? '+' : '';
-
-                        const entryCents = Math.round(parseFloat(t.entry) * 100);
-                        const exitCents = Math.round(parseFloat(t.exit) * 100);
-
-                        let reasonColor = 'var(--accent-cyan)';
-                        const reasonUpper = t.reason.toUpperCase();
-                        if (reasonUpper.includes('BUY') || reasonUpper.includes('PROFIT') || reasonUpper.includes('ENTRY')) {
-                            reasonColor = 'var(--accent-green)';
-                        } else if (reasonUpper.includes('SELL') || reasonUpper.includes('LOSS') || reasonUpper.includes('STOP') || reasonUpper.includes('EXIT')) {
-                            reasonColor = 'var(--accent-red)';
-                        }
-
-                        html += `<div class="trade-row">
-                                    <div>
-                                        <div class="trade-time">${t.time}</div>
-                                        <div class="trade-reason" style="color: ${reasonColor}">${t.reason}</div>
-                                    </div>
-                                    <div class="trade-metrics">
-                                        <div class="trade-route"><span class="money-num">${formatCentsAsMoney(entryCents)}</span> <span style="color: var(--text-muted)">→</span> <span class="money-num">${formatCentsAsMoney(exitCents)}</span></div>
-                                        <div class="pnl-display ${pnlColor}"><span class="money-num">${pnlSign}${formatMoney(Math.abs(t.pnl))}</span></div>
-                                    </div>
-                                  </div>`;
-                    });
-                    document.getElementById('history').innerHTML = html;
-                }
-            } catch (e) {
-                console.error("Sync error", e);
-            }
-        }
-        setInterval(updateDashboard, 1500);
-        updateDashboard();
-    </script>
+    setInterval(updateDashboard, 1500);
+    updateDashboard();
+  </script>
 </body>
 </html>
