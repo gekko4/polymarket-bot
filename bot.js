@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { ClobClient } = require('@polymarket/clob-client');
+const { ClobClient, OrderType, Side } = require('@polymarket/clob-client');
 const { createWalletClient, http: viemHttp } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
 const { polygon } = require('viem/chains');
@@ -20,77 +20,103 @@ const colors = {
   gray: "\x1b[90m"
 };
 
+// ============================================================================
+// ENV / MODE
+// ============================================================================
+
 let rawKey = process.env.PRIVATE_KEY;
-if (!rawKey) {
-  throw new Error(`${colors.red}CRITICAL: PRIVATE_KEY is missing from .env file!${colors.reset}`);
-}
+if (!rawKey) throw new Error('PRIVATE_KEY missing from .env');
 if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 
-const CHAIN_ID = 137;
-const HOST = 'https://clob.polymarket.com';
-let clobClient;
+const TRADING_MODE = (process.env.TRADING_MODE || 'paper').toLowerCase();
 
-// -----------------------------------------------------------------------------
+if (!['paper', 'live'].includes(TRADING_MODE)) {
+  throw new Error(`Invalid TRADING_MODE=${TRADING_MODE}. Use paper or live.`);
+}
+
+const IS_PAPER = TRADING_MODE === 'paper';
+
+const HOST = 'https://clob.polymarket.com';
+const CHAIN_ID = 137;
+
+const SIGNATURE_TYPE = process.env.SIGNATURE_TYPE
+  ? Number(process.env.SIGNATURE_TYPE)
+  : undefined;
+
+const FUNDER = process.env.FUNDER || undefined;
+
+let clobClient;
+let execution;
+
+// ============================================================================
 // STRATEGY CONFIG
-// -----------------------------------------------------------------------------
-// PAPER trading engine.
-//
-// Corrected strategy:
-// 1. Do NOT enter just because one side touches 0.49.
-// 2. First require the whole market to be near the 50/50 centre.
-// 3. Only then arm simulated resting limit bids at 0.49 on YES and NO.
-// 4. If one fills, the opposite side has 15 seconds to fill.
-// 5. If not, bailout the unmatched leg at current bid.
+// ============================================================================
 
 const TARGET_BID = 0.49;
-
-// Centre-regime filter.
-// The strategy only arms if BOTH YES mid and NO mid are inside this band.
-const CENTER_LOW = 0.45;
-const CENTER_HIGH = 0.55;
-
-// Execution realism filter.
-// A 0.49 buy order is only considered "resting" if the ask is still above 0.49.
-const MIN_ASK_ABOVE_TARGET = 0.005;
-
-const SECOND_LEG_TIMEOUT_MS = 15_000;
 const BET_SIZE_USD_PER_SIDE = 1.00;
-const MIN_SECONDS_LEFT_TO_ARM = 25;
-const NO_NEW_TRADES_SECONDS_LEFT = 5;
-const TAKER_FEE_BPS = 180;
+
+const CENTER_ASK_LOW = 0.47;
+const CENTER_ASK_HIGH = 0.56;
+
+const CENTER_BID_LOW = 0.44;
+const CENTER_BID_HIGH = 0.53;
+
+const MAX_SIDE_SPREAD = 0.08;
+const MAX_COMBINED_ASKS = 1.12;
+const MIN_COMBINED_BIDS = 0.88;
+
+const MIN_ASK_ABOVE_TARGET = 0.005;
+const SECOND_LEG_TIMEOUT_MS = 15_000;
+const MIN_SECONDS_LEFT_TO_PLACE_ORDERS = 35;
+const NO_NEW_ENTRIES_SECONDS_LEFT = 20;
 const ONE_TRADE_PER_MARKET = true;
 
-// -----------------------------------------------------------------------------
+const PAPER_TAKER_FEE_BPS = 180;
+const EXIT_MIN_ACCEPTABLE_PRICE = 0.01;
+
+// ============================================================================
 // STATE
-// -----------------------------------------------------------------------------
+// ============================================================================
+
 function blankState() {
   return {
     active: false,
-    status: 'IDLE', // IDLE | WAITING_TO_ARM | WAITING_FIRST_FILL | WAITING_SECOND_FILL | LOCKED
 
-    orderResting: {
-      YES: false,
-      NO: false
-    },
+    status: 'IDLE',
+    // IDLE
+    // WAITING_FOR_CENTER
+    // PLACING_ORDERS
+    // ORDERS_WORKING
+    // ONE_LEG_FILLED
+    // ARB_LOCKED
+    // EXITING
+    // DONE
 
-    firstSide: null,
-    firstFillTime: 0,
-    timeoutAt: 0,
+    yesOrderId: null,
+    noOrderId: null,
+
+    yesOrderLive: false,
+    noOrderLive: false,
 
     yesFilled: false,
     noFilled: false,
 
-    yesFillPrice: 0,
-    noFillPrice: 0,
+    yesAvgFillPrice: 0,
+    noAvgFillPrice: 0,
 
-    yesShares: 0,
-    noShares: 0,
+    yesFilledShares: 0,
+    noFilledShares: 0,
 
-    lastAction: null
+    firstFilledSide: null,
+    firstFillTime: 0,
+    timeoutAt: 0,
+
+    lastAction: null,
+    lastBlockReason: null
   };
 }
 
-let arbState = blankState();
+let state = blankState();
 
 let stats = {
   totalTrades: 0,
@@ -110,26 +136,37 @@ let currentBids = {
   NO: 0
 };
 
-let recentTrades = [];
 let currentYesToken = null;
 let currentNoToken = null;
-let marketEndTime = 0;
 let currentMarketSlug = null;
+let marketEndTime = 0;
+
+let currentMarketMeta = {
+  tickSize: '0.001',
+  negRisk: false
+};
+
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0;
 
 const completedMarketSlugs = new Set();
+let recentTrades = [];
 
-// -----------------------------------------------------------------------------
-// LOGGING
-// -----------------------------------------------------------------------------
-const tradeLogFile = 'paper_trades_log.csv';
+// ============================================================================
+// FILE LOGGING
+// ============================================================================
+
+const tradeLogFile = IS_PAPER ? 'paper_trades_log.csv' : 'live_trades_log.csv';
 const priceLogFile = 'price_history.csv';
 const terminalLogFile = 'terminal_logs.txt';
 
 const tradeStream = fs.createWriteStream(tradeLogFile, { flags: 'a' });
 const priceStream = fs.createWriteStream(priceLogFile, { flags: 'a' });
 const terminalStream = fs.createWriteStream(terminalLogFile, { flags: 'a' });
+
+function stripAnsi(value) {
+  return String(value).replace(/\x1b\[[0-9;]*m/g, '');
+}
 
 const originalLog = console.log;
 
@@ -140,23 +177,184 @@ console.log = function (...args) {
     .map(a => typeof a === 'object' ? JSON.stringify(a) : String(a))
     .join(' ');
 
-  const cleanMessage = message.replace(/\x1b\[[0-9;]*m/g, '');
-  terminalStream.write(`[${new Date().toISOString()}] ${cleanMessage}\n`);
+  terminalStream.write(`[${new Date().toISOString()}] ${stripAnsi(message)}\n`);
 };
 
 if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
   tradeStream.write(
-    'Date,Market,Action,PnL_USD,Balance_USD,Win_Rate_Pct,YES_Filled,NO_Filled,YES_Price,NO_Price,YES_Shares,NO_Shares\n'
+    'Date,Mode,Market,Action,PnL_USD,Balance_USD,Win_Rate_Pct,YES_Filled,NO_Filled,YES_Avg,NO_Avg,YES_Shares,NO_Shares\n'
   );
 }
 
 if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
-  priceStream.write('Timestamp,YES_Ask,NO_Ask,YES_Bid,NO_Bid,YES_Mid,NO_Mid\n');
+  priceStream.write(
+    'Timestamp,YES_Ask,YES_Bid,YES_Spread,NO_Ask,NO_Bid,NO_Spread,AskSum,BidSum,Status,LastAction\n'
+  );
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
+// TERMINAL LOGGER
+// ============================================================================
+
+const LOG_STATUS_EVERY_MS = 10_000;
+
+let lastStatusLogAt = 0;
+let lastStatusKey = '';
+
+function terminalPrice(value) {
+  if (!value || Number(value) <= 0 || Number.isNaN(Number(value))) return '---';
+  return Number(value).toFixed(3);
+}
+
+function money(value) {
+  const n = Number(value || 0);
+  return `$${n.toFixed(2)}`;
+}
+
+function pnlMoney(value) {
+  const n = Number(value || 0);
+  return `${n >= 0 ? '+' : ''}$${n.toFixed(4)}`;
+}
+
+function roiPct(value) {
+  const n = Number(value || 0);
+  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+}
+
+function compactReason(reason) {
+  return String(reason || '-')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function line(text = '') {
+  console.log(text);
+}
+
+const logger = {
+  boot(message) {
+    line(`${colors.magenta}▶ BOOT${colors.reset} | ${message}`);
+  },
+
+  scanner(message) {
+    line(`${colors.yellow}◆ SCANNER${colors.reset} | ${message}`);
+  },
+
+  ws(message) {
+    line(`${colors.cyan}◇ WS${colors.reset} | ${message}`);
+  },
+
+  event(title, fields = {}) {
+    const parts = Object.entries(fields)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}=${value}`);
+
+    line(
+      `${colors.green}✓ ${title}${colors.reset}` +
+      (parts.length ? ` | ${parts.join(' | ')}` : '')
+    );
+  },
+
+  warn(title, fields = {}) {
+    const parts = Object.entries(fields)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}=${value}`);
+
+    line(
+      `${colors.yellow}⚠ ${title}${colors.reset}` +
+      (parts.length ? ` | ${parts.join(' | ')}` : '')
+    );
+  },
+
+  error(title, errorOrFields = {}) {
+    let fields = {};
+
+    if (errorOrFields instanceof Error) {
+      fields.message = errorOrFields.message;
+    } else if (typeof errorOrFields === 'string') {
+      fields.message = errorOrFields;
+    } else {
+      fields = errorOrFields;
+    }
+
+    const parts = Object.entries(fields)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}=${value}`);
+
+    line(
+      `${colors.red}✕ ${title}${colors.reset}` +
+      (parts.length ? ` | ${parts.join(' | ')}` : '')
+    );
+  },
+
+  trade({ reason, netPnL, balance, roi, winRate, wins, losses }) {
+    const isWin = Number(netPnL) > 0;
+    const isLoss = Number(netPnL) < 0;
+    const c = isWin ? colors.green : isLoss ? colors.red : colors.gray;
+
+    line('');
+    line(`${colors.gray}┌──────────────── TRADE RESOLVED ────────────────┐${colors.reset}`);
+    line(`${colors.gray}│${colors.reset} Result   : ${c}${compactReason(reason)}${colors.reset}`);
+    line(`${colors.gray}│${colors.reset} PnL      : ${c}${pnlMoney(netPnL)}${colors.reset}`);
+    line(`${colors.gray}│${colors.reset} Balance  : ${money(balance)} (${roiPct(roi)} ROI)`);
+    line(`${colors.gray}│${colors.reset} WinRate  : ${winRate}% (${wins}W / ${losses}L)`);
+    line(`${colors.gray}└────────────────────────────────────────────────┘${colors.reset}`);
+    line('');
+  },
+
+  status(snapshot) {
+    const now = Date.now();
+
+    const key = [
+      snapshot.mode,
+      snapshot.status,
+      snapshot.left,
+      snapshot.timeout,
+      snapshot.yesAsk,
+      snapshot.yesBid,
+      snapshot.noAsk,
+      snapshot.noBid,
+      snapshot.last
+    ].join('|');
+
+    const shouldPrint =
+      key !== lastStatusKey ||
+      now - lastStatusLogAt >= LOG_STATUS_EVERY_MS;
+
+    if (!shouldPrint) return;
+
+    lastStatusKey = key;
+    lastStatusLogAt = now;
+
+    const statusColour =
+      snapshot.status.includes('HOLDING') ||
+      snapshot.status.includes('ORDERS WORKING')
+        ? colors.cyan
+        : snapshot.status.includes('WAITING')
+          ? colors.yellow
+          : snapshot.status.includes('DONE')
+            ? colors.gray
+            : colors.green;
+
+    line(
+      `${colors.gray}[${snapshot.mode}]${colors.reset} ` +
+      `${statusColour}${snapshot.status}${colors.reset} | ` +
+      `${snapshot.left}s left | ` +
+      `timeout ${snapshot.timeout}s | ` +
+      `bal ${snapshot.balance} | ` +
+      `YES ask ${snapshot.yesAsk} bid ${snapshot.yesBid} spr ${snapshot.yesSpread} | ` +
+      `NO ask ${snapshot.noAsk} bid ${snapshot.noBid} spr ${snapshot.noSpread} | ` +
+      `sum ask ${snapshot.askSum} bid ${snapshot.bidSum} | ` +
+      `last ${snapshot.last}`
+    );
+  }
+};
+
+// ============================================================================
 // HELPERS
-// -----------------------------------------------------------------------------
+// ============================================================================
+
 function secondsLeftInMarket() {
   return Math.max(0, Math.floor((marketEndTime - Date.now()) / 1000));
 }
@@ -165,6 +363,10 @@ function sideFromToken(tokenId) {
   if (tokenId === currentYesToken) return 'YES';
   if (tokenId === currentNoToken) return 'NO';
   return null;
+}
+
+function tokenForSide(side) {
+  return side === 'YES' ? currentYesToken : currentNoToken;
 }
 
 function opposite(side) {
@@ -180,33 +382,91 @@ function bothPricesKnown() {
   );
 }
 
-function getMid(side) {
+function getSpread(side) {
+  if (!bothPricesKnown()) return 999;
+  return currentAsks[side] - currentBids[side];
+}
+
+function askSum() {
   if (!bothPricesKnown()) return 0;
-  return (currentAsks[side] + currentBids[side]) / 2;
+  return currentAsks.YES + currentAsks.NO;
 }
 
-function fmtPrice(value) {
-  return value > 0 ? value.toFixed(3) : '---';
+function bidSum() {
+  if (!bothPricesKnown()) return 0;
+  return currentBids.YES + currentBids.NO;
 }
 
-function fmtMid(side) {
-  const mid = getMid(side);
-  return mid > 0 ? mid.toFixed(3) : '---';
+function fmt(value) {
+  return value > 0 ? Number(value).toFixed(3) : '---';
 }
 
-function isNearCenter() {
+function readableStatus() {
+  switch (state.status) {
+    case 'WAITING_FOR_CENTER':
+      return 'WAITING FOR REAL 50/50 BOOK';
+    case 'PLACING_ORDERS':
+      return 'PLACING LIMIT ORDERS';
+    case 'ORDERS_WORKING':
+      return 'LIMIT ORDERS WORKING';
+    case 'ONE_LEG_FILLED':
+      return `HOLDING ${state.firstFilledSide}, WAITING FOR ${opposite(state.firstFilledSide)}`;
+    case 'ARB_LOCKED':
+      return 'ARB LOCKED';
+    case 'EXITING':
+      return 'EXITING UNMATCHED LEG';
+    case 'DONE':
+      return 'DONE THIS MARKET';
+    case 'IDLE':
+      return 'IDLE';
+    default:
+      return state.status;
+  }
+}
+
+// ============================================================================
+// ENTRY FILTER
+// ============================================================================
+
+function hasTightSpreads() {
   if (!bothPricesKnown()) return false;
 
-  const yesMid = getMid('YES');
-  const noMid = getMid('NO');
-
-  const yesCentered = yesMid >= CENTER_LOW && yesMid <= CENTER_HIGH;
-  const noCentered = noMid >= CENTER_LOW && noMid <= CENTER_HIGH;
-
-  return yesCentered && noCentered;
+  return (
+    getSpread('YES') > 0 &&
+    getSpread('NO') > 0 &&
+    getSpread('YES') <= MAX_SIDE_SPREAD &&
+    getSpread('NO') <= MAX_SIDE_SPREAD
+  );
 }
 
-function ordersWouldBeResting() {
+function hasSaneCombinedBook() {
+  if (!bothPricesKnown()) return false;
+  return askSum() <= MAX_COMBINED_ASKS && bidSum() >= MIN_COMBINED_BIDS;
+}
+
+function isRealCenterBook() {
+  if (!bothPricesKnown()) return false;
+
+  const yesAskOk =
+    currentAsks.YES >= CENTER_ASK_LOW &&
+    currentAsks.YES <= CENTER_ASK_HIGH;
+
+  const noAskOk =
+    currentAsks.NO >= CENTER_ASK_LOW &&
+    currentAsks.NO <= CENTER_ASK_HIGH;
+
+  const yesBidOk =
+    currentBids.YES >= CENTER_BID_LOW &&
+    currentBids.YES <= CENTER_BID_HIGH;
+
+  const noBidOk =
+    currentBids.NO >= CENTER_BID_LOW &&
+    currentBids.NO <= CENTER_BID_HIGH;
+
+  return yesAskOk && noAskOk && yesBidOk && noBidOk;
+}
+
+function ordersWouldRest() {
   if (!bothPricesKnown()) return false;
 
   return (
@@ -215,84 +475,485 @@ function ordersWouldBeResting() {
   );
 }
 
-function getArmBlockReason() {
-  if (!bothPricesKnown()) {
-    return 'WAITING_FOR_FULL_PRICE_DATA';
+function getEntryBlockReason() {
+  if (!bothPricesKnown()) return 'WAITING_FOR_FULL_BOOK';
+
+  if (secondsLeftInMarket() < MIN_SECONDS_LEFT_TO_PLACE_ORDERS) {
+    return 'TOO_CLOSE_TO_MARKET_END';
   }
 
-  if (secondsLeftInMarket() < MIN_SECONDS_LEFT_TO_ARM) {
-    return 'NOT_ARMED_TOO_CLOSE_TO_MARKET_END';
+  if (!hasTightSpreads()) {
+    return 'SPREAD_TOO_WIDE';
   }
 
-  if (!isNearCenter()) {
-    return 'NOT_ARMED_NOT_NEAR_50_50_CENTER';
+  if (!hasSaneCombinedBook()) {
+    return 'COMBINED_BOOK_BAD';
   }
 
-  if (!ordersWouldBeResting()) {
-    return 'NOT_ARMED_ORDER_WOULD_CROSS_NOT_REST';
+  if (!isRealCenterBook()) {
+    return 'NOT_REAL_50_50_BOOK';
+  }
+
+  if (!ordersWouldRest()) {
+    return 'ORDER_WOULD_CROSS_NOT_REST';
   }
 
   return null;
 }
 
-function canArmRestingLimitOrders() {
-  return getArmBlockReason() === null;
+// ============================================================================
+// EXECUTION ADAPTERS
+// ============================================================================
+
+class PaperExecutionAdapter {
+  constructor() {
+    this.orders = new Map();
+    this.nextId = 1;
+  }
+
+  async placeLimitBuy({ tokenId, sideName, price, usdSize }) {
+    const currentAsk = currentAsks[sideName];
+
+    if (!currentAsk || currentAsk <= price + MIN_ASK_ABOVE_TARGET) {
+      throw new Error(`PAPER_REJECT_${sideName}_ORDER_WOULD_CROSS ask=${fmt(currentAsk)} price=${price}`);
+    }
+
+    const orderId = `paper-${Date.now()}-${this.nextId++}`;
+    const shares = usdSize / price;
+
+    const order = {
+      orderId,
+      tokenId,
+      sideName,
+      type: 'BUY',
+      price,
+      usdSize,
+      shares,
+      filledShares: 0,
+      avgFillPrice: 0,
+      isFullyFilled: false,
+      isCancelled: false,
+      createdAt: Date.now()
+    };
+
+    this.orders.set(orderId, order);
+
+    logger.event('PAPER ORDER PLACED', {
+      side: sideName,
+      type: 'BUY',
+      shares: shares.toFixed(6),
+      price: price.toFixed(2),
+      orderId
+    });
+
+    return { orderId, raw: order };
+  }
+
+  async cancelOrder(orderId) {
+    const order = this.orders.get(orderId);
+
+    if (!order) {
+      return { ok: false, raw: null };
+    }
+
+    order.isCancelled = true;
+
+    logger.warn('PAPER ORDER CANCELLED', { orderId });
+
+    return { ok: true, raw: order };
+  }
+
+  async getOrderStatus(orderId) {
+    const order = this.orders.get(orderId);
+
+    if (!order) {
+      throw new Error(`PAPER_ORDER_NOT_FOUND ${orderId}`);
+    }
+
+    if (!order.isCancelled && !order.isFullyFilled) {
+      const ask = currentAsks[order.sideName];
+
+      if (ask > 0 && ask <= order.price) {
+        order.filledShares = order.shares;
+        order.avgFillPrice = order.price;
+        order.isFullyFilled = true;
+
+        logger.event('PAPER FILL', {
+          side: order.sideName,
+          orderId,
+          price: order.price.toFixed(2),
+          ask: ask.toFixed(3)
+        });
+      }
+    }
+
+    return {
+      orderId: order.orderId,
+      filledShares: order.filledShares,
+      avgFillPrice: order.avgFillPrice,
+      isFullyFilled: order.isFullyFilled,
+      isCancelled: order.isCancelled,
+      raw: order
+    };
+  }
+
+  async exitPosition({ tokenId, sideName, shares, minAcceptablePrice }) {
+    const bid = currentBids[sideName];
+
+    if (!bid || bid <= 0) {
+      throw new Error(`PAPER_EXIT_NO_VALID_BID_${sideName}`);
+    }
+
+    if (bid < minAcceptablePrice) {
+      throw new Error(`PAPER_EXIT_BID_BELOW_MIN_${sideName} bid=${bid}`);
+    }
+
+    const gross = shares * bid;
+    const fee = gross * (PAPER_TAKER_FEE_BPS / 10000);
+    const netValue = gross - fee;
+    const effectiveExit = netValue / shares;
+
+    logger.event('PAPER EXIT', {
+      side: sideName,
+      shares: shares.toFixed(6),
+      bid: bid.toFixed(3),
+      effective: effectiveExit.toFixed(4)
+    });
+
+    return {
+      soldShares: shares,
+      avgExitPrice: effectiveExit,
+      raw: { tokenId, sideName, shares, bid, fee, netValue }
+    };
+  }
 }
 
-function getReadableStatus() {
-  if (arbState.status === 'WAITING_TO_ARM') {
-    return 'WAITING FOR 50/50 CENTRE';
+class LiveExecutionAdapter {
+  constructor(client) {
+    this.client = client;
   }
 
-  if (arbState.status === 'WAITING_FIRST_FILL') {
-    return 'LIMIT ORDERS LIVE';
+  async placeLimitBuy({ tokenId, sideName, price, usdSize }) {
+    const shares = usdSize / price;
+
+    const response = await this.client.createAndPostOrder(
+      {
+        tokenID: tokenId,
+        price,
+        side: Side.BUY,
+        size: shares
+      },
+      {
+        tickSize: currentMarketMeta.tickSize,
+        negRisk: currentMarketMeta.negRisk
+      },
+      OrderType.GTC
+    );
+
+    const orderId = response?.orderID || response?.orderId || response?.id;
+
+    if (!orderId) {
+      throw new Error(`LIVE_ORDER_NO_ID ${JSON.stringify(response)}`);
+    }
+
+    logger.event('LIVE ORDER PLACED', {
+      side: sideName,
+      type: 'BUY',
+      shares: shares.toFixed(6),
+      price: price.toFixed(2),
+      orderId
+    });
+
+    return { orderId, raw: response };
   }
 
-  if (arbState.status === 'WAITING_SECOND_FILL') {
-    return `HOLDING ${arbState.firstSide}, WAITING FOR ${opposite(arbState.firstSide)}`;
+  async cancelOrder(orderId) {
+    if (typeof this.client.cancelOrder === 'function') {
+      const response = await this.client.cancelOrder(orderId);
+      return { ok: true, raw: response };
+    }
+
+    if (typeof this.client.cancel === 'function') {
+      const response = await this.client.cancel(orderId);
+      return { ok: true, raw: response };
+    }
+
+    throw new Error('LIVE_CANCEL_METHOD_NOT_AVAILABLE');
   }
 
-  if (arbState.status === 'LOCKED') {
-    return 'ARB LOCKED';
+  async getOrderStatus(orderId) {
+    let response = null;
+
+    if (typeof this.client.getOrder === 'function') {
+      response = await this.client.getOrder(orderId);
+    } else if (typeof this.client.getOrders === 'function') {
+      const orders = await this.client.getOrders();
+      response = Array.isArray(orders)
+        ? orders.find(o => o.id === orderId || o.orderId === orderId || o.orderID === orderId)
+        : null;
+    } else {
+      throw new Error('LIVE_ORDER_STATUS_METHOD_NOT_AVAILABLE');
+    }
+
+    if (!response) {
+      return {
+        orderId,
+        filledShares: 0,
+        avgFillPrice: 0,
+        isFullyFilled: false,
+        isCancelled: false,
+        raw: null
+      };
+    }
+
+    const filledShares = Number(
+      response.filled_size ??
+      response.filledSize ??
+      response.size_matched ??
+      response.matched_size ??
+      response.filled ??
+      0
+    );
+
+    const avgFillPrice = Number(
+      response.avg_price ??
+      response.avgPrice ??
+      response.price ??
+      0
+    );
+
+    const status = String(response.status || '').toLowerCase();
+
+    return {
+      orderId,
+      filledShares,
+      avgFillPrice,
+      isFullyFilled:
+        status.includes('matched') ||
+        status.includes('filled') ||
+        filledShares > 0,
+      isCancelled: status.includes('cancel'),
+      raw: response
+    };
   }
 
-  if (arbState.status === 'IDLE') {
-    return 'IDLE / DONE THIS MARKET';
-  }
+  async exitPosition({ tokenId, sideName, shares, minAcceptablePrice }) {
+    const bid = currentBids[sideName];
 
-  return arbState.status;
+    if (!bid || bid < minAcceptablePrice) {
+      throw new Error(`LIVE_EXIT_BLOCKED_${sideName} bid=${fmt(bid)} min=${minAcceptablePrice}`);
+    }
+
+    const response = await this.client.createAndPostOrder(
+      {
+        tokenID: tokenId,
+        price: bid,
+        side: Side.SELL,
+        size: shares
+      },
+      {
+        tickSize: currentMarketMeta.tickSize,
+        negRisk: currentMarketMeta.negRisk
+      },
+      OrderType.FAK
+    );
+
+    return {
+      soldShares: shares,
+      avgExitPrice: bid,
+      raw: response
+    };
+  }
 }
 
-function tryArmRestingLimitOrders() {
-  if (arbState.status !== 'WAITING_TO_ARM') return;
-  if (ONE_TRADE_PER_MARKET && completedMarketSlugs.has(currentMarketSlug)) return;
+// ============================================================================
+// STRATEGY
+// ============================================================================
 
-  const blockReason = getArmBlockReason();
+async function maybePlaceEntryOrders() {
+  if (state.status !== 'WAITING_FOR_CENTER') return;
 
-  if (blockReason) {
-    arbState.lastAction = blockReason;
+  if (ONE_TRADE_PER_MARKET && completedMarketSlugs.has(currentMarketSlug)) {
+    state.lastAction = 'MARKET_ALREADY_TRADED';
     return;
   }
 
-  arbState.status = 'WAITING_FIRST_FILL';
-  arbState.orderResting = {
-    YES: true,
-    NO: true
-  };
-  arbState.lastAction = 'RESTING_LIMIT_BIDS_ARMED_NEAR_CENTER';
+  const blockReason = getEntryBlockReason();
 
-  console.log(
-    `${colors.magenta}[ORDERS LIVE] Market is near 50/50. ` +
-    `Simulated limit buys placed at $${TARGET_BID.toFixed(2)} on YES and NO. ` +
-    `YES ask $${currentAsks.YES.toFixed(3)}, bid $${currentBids.YES.toFixed(3)}, mid $${fmtMid('YES')} | ` +
-    `NO ask $${currentAsks.NO.toFixed(3)}, bid $${currentBids.NO.toFixed(3)}, mid $${fmtMid('NO')}.${colors.reset}`
-  );
+  if (blockReason) {
+    state.lastBlockReason = blockReason;
+    state.lastAction = blockReason;
+    return;
+  }
+
+  state.status = 'PLACING_ORDERS';
+  state.lastAction = 'REAL_CENTER_CONFIRMED_PLACING_ORDERS';
+
+  logger.event('ENTRY APPROVED', {
+    yes: `${currentBids.YES.toFixed(3)}-${currentAsks.YES.toFixed(3)}`,
+    yesSpread: getSpread('YES').toFixed(3),
+    no: `${currentBids.NO.toFixed(3)}-${currentAsks.NO.toFixed(3)}`,
+    noSpread: getSpread('NO').toFixed(3),
+    askSum: askSum().toFixed(3),
+    bidSum: bidSum().toFixed(3)
+  });
+
+  try {
+    const yesOrder = await execution.placeLimitBuy({
+      tokenId: currentYesToken,
+      sideName: 'YES',
+      price: TARGET_BID,
+      usdSize: BET_SIZE_USD_PER_SIDE
+    });
+
+    const noOrder = await execution.placeLimitBuy({
+      tokenId: currentNoToken,
+      sideName: 'NO',
+      price: TARGET_BID,
+      usdSize: BET_SIZE_USD_PER_SIDE
+    });
+
+    state.yesOrderId = yesOrder.orderId;
+    state.noOrderId = noOrder.orderId;
+    state.yesOrderLive = true;
+    state.noOrderLive = true;
+    state.status = 'ORDERS_WORKING';
+    state.lastAction = 'LIMIT_ORDERS_WORKING';
+
+    logger.event('ORDERS WORKING', {
+      yesOrder: state.yesOrderId,
+      noOrder: state.noOrderId
+    });
+  } catch (err) {
+    state.status = 'WAITING_FOR_CENTER';
+    state.lastAction = `ORDER_PLACEMENT_FAILED ${err.message}`;
+    logger.error('ORDER ERROR', err);
+  }
 }
 
-// -----------------------------------------------------------------------------
-// TRADE ACCOUNTING
-// -----------------------------------------------------------------------------
-function logCompletedTrade(reason, netPnL) {
+async function checkOrderFills() {
+  if (state.status !== 'ORDERS_WORKING' && state.status !== 'ONE_LEG_FILLED') return;
+
+  try {
+    if (state.yesOrderLive && state.yesOrderId && !state.yesFilled) {
+      const s = await execution.getOrderStatus(state.yesOrderId);
+
+      if (Number(s.filledShares) > 0) {
+        state.yesFilled = true;
+        state.yesFilledShares = Number(s.filledShares);
+        state.yesAvgFillPrice = Number(s.avgFillPrice);
+        state.yesOrderLive = !s.isFullyFilled;
+        await handleLegFilled('YES');
+      }
+    }
+
+    if (state.noOrderLive && state.noOrderId && !state.noFilled) {
+      const s = await execution.getOrderStatus(state.noOrderId);
+
+      if (Number(s.filledShares) > 0) {
+        state.noFilled = true;
+        state.noFilledShares = Number(s.filledShares);
+        state.noAvgFillPrice = Number(s.avgFillPrice);
+        state.noOrderLive = !s.isFullyFilled;
+        await handleLegFilled('NO');
+      }
+    }
+
+    if (state.yesFilled && state.noFilled) {
+      lockArb();
+    }
+  } catch (err) {
+    state.lastAction = `ORDER_STATUS_ERROR ${err.message}`;
+    logger.error('STATUS ERROR', err);
+  }
+}
+
+async function handleLegFilled(side) {
+  if (!state.firstFilledSide) {
+    state.firstFilledSide = side;
+    state.firstFillTime = Date.now();
+    state.timeoutAt = state.firstFillTime + SECOND_LEG_TIMEOUT_MS;
+    state.status = 'ONE_LEG_FILLED';
+    state.lastAction = `FIRST_FILL_${side}`;
+
+    logger.event('FIRST FILL', {
+      side,
+      waitingFor: opposite(side),
+      timeout: `${SECOND_LEG_TIMEOUT_MS / 1000}s`
+    });
+  }
+}
+
+function lockArb() {
+  state.status = 'ARB_LOCKED';
+  state.lastAction = 'BOTH_LEGS_FILLED';
+
+  const payoutShares = Math.min(state.yesFilledShares, state.noFilledShares);
+
+  const totalCost =
+    (state.yesFilledShares * state.yesAvgFillPrice) +
+    (state.noFilledShares * state.noAvgFillPrice);
+
+  const netPnL = payoutShares - totalCost;
+
+  logger.event('ARB LOCKED', {
+    yesShares: state.yesFilledShares.toFixed(6),
+    noShares: state.noFilledShares.toFixed(6)
+  });
+
+  logCompletedTrade('FULL_ARBITRAGE_CAPTURE', netPnL, 0);
+}
+
+async function handleSecondLegTimeout() {
+  if (state.status !== 'ONE_LEG_FILLED') return;
+  if (Date.now() < state.timeoutAt) return;
+
+  const filledSide = state.firstFilledSide;
+  const unfilledSide = opposite(filledSide);
+
+  state.status = 'EXITING';
+  state.lastAction = `SECOND_LEG_TIMEOUT_EXITING_${filledSide}`;
+
+  logger.warn('SECOND LEG TIMEOUT', {
+    filledSide,
+    cancelling: unfilledSide,
+    action: `exit ${filledSide}`
+  });
+
+  try {
+    if (unfilledSide === 'YES' && state.yesOrderLive && state.yesOrderId) {
+      await execution.cancelOrder(state.yesOrderId);
+      state.yesOrderLive = false;
+    }
+
+    if (unfilledSide === 'NO' && state.noOrderLive && state.noOrderId) {
+      await execution.cancelOrder(state.noOrderId);
+      state.noOrderLive = false;
+    }
+
+    const shares = filledSide === 'YES' ? state.yesFilledShares : state.noFilledShares;
+    const entryAvg = filledSide === 'YES' ? state.yesAvgFillPrice : state.noAvgFillPrice;
+
+    const exit = await execution.exitPosition({
+      tokenId: tokenForSide(filledSide),
+      sideName: filledSide,
+      shares,
+      minAcceptablePrice: EXIT_MIN_ACCEPTABLE_PRICE
+    });
+
+    const soldShares = Number(exit.soldShares);
+    const avgExitPrice = Number(exit.avgExitPrice);
+    const netPnL = (soldShares * avgExitPrice) - (soldShares * entryAvg);
+
+    logCompletedTrade(`BAILOUT_${filledSide}_SECOND_LEG_TIMEOUT`, netPnL, avgExitPrice);
+  } catch (err) {
+    state.status = 'EXITING';
+    state.lastAction = `EXIT_FAILED ${err.message}`;
+    logger.error('EXIT ERROR', err);
+  }
+}
+
+function logCompletedTrade(reason, netPnL, exitPrice) {
   stats.totalTrades++;
 
   if (netPnL > 0) stats.wins++;
@@ -304,159 +965,64 @@ function logCompletedTrade(reason, netPnL) {
     ? ((stats.wins / stats.totalTrades) * 100).toFixed(1)
     : '0.0';
 
-  const roi = (
-    ((stats.currentBalance - stats.startingBalance) / stats.startingBalance) *
-    100
-  ).toFixed(2);
+  const roi =
+    (((stats.currentBalance - stats.startingBalance) / stats.startingBalance) * 100).toFixed(2);
 
-  const c = netPnL > 0
-    ? colors.brightYellow
-    : netPnL < 0
-      ? colors.red
-      : colors.gray;
-
-  console.log(`\n${colors.gray}========================================${colors.reset}`);
-  console.log(`[ARB RESOLVED] Outcome: ${c}${reason}${colors.reset}`);
-  console.log(`NET PnL: ${c}$${netPnL > 0 ? '+' : ''}${netPnL.toFixed(4)}${colors.reset}`);
-  console.log(`[STATS] Balance: $${stats.currentBalance.toFixed(2)} (${roi > 0 ? '+' : ''}${roi}% ROI)`);
-  console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
-  console.log(`${colors.gray}========================================\n${colors.reset}`);
+  logger.trade({
+    reason,
+    netPnL,
+    balance: stats.currentBalance,
+    roi,
+    winRate,
+    wins: stats.wins,
+    losses: stats.losses
+  });
 
   tradeStream.write([
     new Date().toISOString(),
+    TRADING_MODE,
     currentMarketSlug || 'BTC-5M',
     reason,
     netPnL.toFixed(4),
     stats.currentBalance.toFixed(2),
     `${winRate}%`,
-    arbState.yesFilled,
-    arbState.noFilled,
-    arbState.yesFillPrice.toFixed(4),
-    arbState.noFillPrice.toFixed(4),
-    arbState.yesShares.toFixed(6),
-    arbState.noShares.toFixed(6)
+    state.yesFilled,
+    state.noFilled,
+    state.yesAvgFillPrice.toFixed(4),
+    state.noAvgFillPrice.toFixed(4),
+    state.yesFilledShares.toFixed(6),
+    state.noFilledShares.toFixed(6)
   ].join(',') + '\n');
+
+  const entryPrice = state.firstFilledSide === 'YES'
+    ? state.yesAvgFillPrice
+    : state.firstFilledSide === 'NO'
+      ? state.noAvgFillPrice
+      : 0;
 
   recentTrades.unshift({
     time: new Date().toLocaleTimeString(),
     reason,
-    pnl: netPnL.toFixed(4)
+    pnl: Number(netPnL.toFixed(4)),
+    entry: entryPrice,
+    exit: exitPrice || 0
   });
 
   if (recentTrades.length > 10) recentTrades.pop();
 
-  if (currentMarketSlug) completedMarketSlugs.add(currentMarketSlug);
-
-  arbState = blankState();
-}
-
-function fillFirstLeg(side) {
-  if (!arbState.orderResting[side]) {
-    console.log(
-      `${colors.gray}[IGNORED] ${side} <= target, but no resting order was armed. ` +
-      `This prevents restart-cross fills.${colors.reset}`
-    );
-    return;
+  if (currentMarketSlug) {
+    completedMarketSlugs.add(currentMarketSlug);
   }
 
-  const now = Date.now();
-
-  arbState.status = 'WAITING_SECOND_FILL';
-  arbState.firstSide = side;
-  arbState.firstFillTime = now;
-  arbState.timeoutAt = now + SECOND_LEG_TIMEOUT_MS;
-  arbState.orderResting[side] = false;
-  arbState.lastAction = `FIRST_FILL_${side}`;
-
-  if (side === 'YES') {
-    arbState.yesFilled = true;
-    arbState.yesFillPrice = TARGET_BID;
-    arbState.yesShares = BET_SIZE_USD_PER_SIDE / TARGET_BID;
-  } else {
-    arbState.noFilled = true;
-    arbState.noFillPrice = TARGET_BID;
-    arbState.noShares = BET_SIZE_USD_PER_SIDE / TARGET_BID;
-  }
-
-  console.log(
-    `\n${colors.cyan}[FIRST FILL] ${side} resting bid filled at $${TARGET_BID.toFixed(2)}. ` +
-    `Waiting ${SECOND_LEG_TIMEOUT_MS / 1000}s for ${opposite(side)}.${colors.reset}`
-  );
+  state = blankState();
+  state.status = 'DONE';
 }
 
-function fillSecondLeg(side) {
-  if (!arbState.orderResting[side]) return;
+// ============================================================================
+// MARKET DATA
+// ============================================================================
 
-  arbState.orderResting[side] = false;
-
-  if (side === 'YES') {
-    arbState.yesFilled = true;
-    arbState.yesFillPrice = TARGET_BID;
-    arbState.yesShares = BET_SIZE_USD_PER_SIDE / TARGET_BID;
-  } else {
-    arbState.noFilled = true;
-    arbState.noFillPrice = TARGET_BID;
-    arbState.noShares = BET_SIZE_USD_PER_SIDE / TARGET_BID;
-  }
-
-  arbState.status = 'LOCKED';
-
-  const payoutShares = Math.min(arbState.yesShares, arbState.noShares);
-
-  const totalCost =
-    (arbState.yesShares * arbState.yesFillPrice) +
-    (arbState.noShares * arbState.noFillPrice);
-
-  const grossReturn = payoutShares;
-  const netPnL = grossReturn - totalCost;
-
-  logCompletedTrade('FULL_ARBITRAGE_CAPTURE', netPnL);
-}
-
-function bailoutUnmatchedLeg(reason) {
-  if (!arbState.active) return;
-
-  let side = null;
-
-  if (arbState.yesFilled && !arbState.noFilled) side = 'YES';
-  if (arbState.noFilled && !arbState.yesFilled) side = 'NO';
-
-  if (!side) return;
-
-  const shares = side === 'YES' ? arbState.yesShares : arbState.noShares;
-
-  const entryPrice = side === 'YES'
-    ? arbState.yesFillPrice
-    : arbState.noFillPrice;
-
-  const exitBid = currentBids[side];
-
-  if (!exitBid || isNaN(exitBid) || exitBid <= 0) {
-    console.log(
-      `${colors.red}[BAILOUT BLOCKED] No valid ${side} bid. ` +
-      `Holding paper state until valid bid/update.${colors.reset}`
-    );
-    return;
-  }
-
-  const entryCost = shares * entryPrice;
-  const exitValue = shares * exitBid;
-  const takerFee = exitValue * (TAKER_FEE_BPS / 10000);
-  const netPnL = exitValue - entryCost - takerFee;
-
-  console.log(
-    `${colors.magenta}[BAILOUT] ${reason}. Sold unmatched ${side} at bid $${exitBid.toFixed(3)}.${colors.reset}`
-  );
-
-  logCompletedTrade(`BAILOUT_${side}_${reason}`, netPnL);
-}
-
-// -----------------------------------------------------------------------------
-// CORE STRATEGY
-// -----------------------------------------------------------------------------
 function handleMarketUpdate(data) {
-  if (!data || !arbState.active) return;
-
   const bestAsk = Number(data.bestAsk);
   const bestBid = Number(data.bestBid);
 
@@ -467,55 +1033,8 @@ function handleMarketUpdate(data) {
 
   currentAsks[side] = bestAsk;
   currentBids[side] = bestBid;
-
-  const now = Date.now();
-  const secondsLeft = secondsLeftInMarket();
-
-  if (arbState.status === 'WAITING_TO_ARM') {
-    tryArmRestingLimitOrders();
-    return;
-  }
-
-  if (arbState.status === 'WAITING_SECOND_FILL' && now >= arbState.timeoutAt) {
-    bailoutUnmatchedLeg('SECOND_LEG_TIMEOUT');
-    return;
-  }
-
-  if (secondsLeft <= NO_NEW_TRADES_SECONDS_LEFT) {
-    if (arbState.status === 'WAITING_SECOND_FILL') {
-      bailoutUnmatchedLeg('MARKET_END_BAILOUT');
-    }
-    return;
-  }
-
-  if (arbState.status === 'WAITING_FIRST_FILL') {
-    // Valid only because the order was armed earlier when:
-    // 1. market was near 50/50 centre
-    // 2. both asks were above the 0.49 target
-    //
-    // Therefore, a later bestAsk <= target represents price moving down into our resting bid.
-    if (arbState.orderResting[side] && bestAsk <= TARGET_BID) {
-      fillFirstLeg(side);
-    }
-    return;
-  }
-
-  if (arbState.status === 'WAITING_SECOND_FILL') {
-    const needed = opposite(arbState.firstSide);
-
-    if (
-      side === needed &&
-      arbState.orderResting[side] &&
-      bestAsk <= TARGET_BID
-    ) {
-      fillSecondLeg(side);
-    }
-  }
 }
 
-// -----------------------------------------------------------------------------
-// WEBSOCKET
-// -----------------------------------------------------------------------------
 function connectWebsocket() {
   if (global.wsMarket) {
     try {
@@ -523,7 +1042,7 @@ function connectWebsocket() {
     } catch (e) {}
   }
 
-  console.log(`${colors.yellow}[WS] Booting fresh market connection...${colors.reset}`);
+  logger.ws('booting market websocket');
 
   const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
   global.wsMarket = wsMarket;
@@ -562,24 +1081,20 @@ function connectWebsocket() {
     } catch (e) {}
   });
 
-  wsMarket.on('error', e => {
-    console.log(`${colors.red}[WS ERROR] ${e.message}${colors.reset}`);
-  });
-
-  wsMarket.on('close', () => {
-    console.log(`${colors.gray}[WS] closed${colors.reset}`);
-  });
+  wsMarket.on('error', e => logger.error('WS ERROR', e));
+  wsMarket.on('close', () => logger.warn('WS CLOSED'));
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // MARKET LOADER
-// -----------------------------------------------------------------------------
+// ============================================================================
+
 async function loadNextMarket() {
   if (isSearchingNextMarket) return;
 
   isSearchingNextMarket = true;
 
-  console.log(`\n${colors.yellow}[SCANNER] Calculating current active 5-minute BTC market...${colors.reset}`);
+  logger.scanner('calculating current active BTC 5-minute market');
 
   try {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -591,7 +1106,7 @@ async function loadNextMarket() {
     const events = await response.json();
 
     if (!events?.length || !events[0].markets?.length) {
-      console.log(`${colors.gray}[SCANNER] ${eventSlug} not indexed yet. Retrying...${colors.reset}`);
+      logger.warn('MARKET NOT INDEXED', { market: eventSlug });
       searchCooldownTimer = Date.now() + 5000;
       return;
     }
@@ -604,6 +1119,7 @@ async function loadNextMarket() {
       : market.clobTokenIds;
 
     if (!tokens?.[0] || !tokens?.[1]) {
+      logger.warn('MARKET TOKENS MISSING', { market: eventSlug });
       searchCooldownTimer = Date.now() + 5000;
       return;
     }
@@ -613,50 +1129,96 @@ async function loadNextMarket() {
     currentMarketSlug = eventSlug;
     marketEndTime = endSec * 1000;
 
-    currentAsks = {
-      YES: 0,
-      NO: 0
+    currentMarketMeta = {
+      tickSize: String(market.minimumTickSize || market.tickSize || '0.001'),
+      negRisk: Boolean(market.negRisk || market.neg_risk || false)
     };
 
-    currentBids = {
-      YES: 0,
-      NO: 0
-    };
+    currentAsks = { YES: 0, NO: 0 };
+    currentBids = { YES: 0, NO: 0 };
 
-    arbState = blankState();
-    arbState.active = !completedMarketSlugs.has(eventSlug);
-    arbState.status = arbState.active ? 'WAITING_TO_ARM' : 'IDLE';
+    state = blankState();
+    state.active = !completedMarketSlugs.has(eventSlug);
+    state.status = state.active ? 'WAITING_FOR_CENTER' : 'DONE';
 
-    console.log(`${colors.brightYellow}[MARKET LOADED] ${event.title}${colors.reset}`);
+    logger.event('MARKET LOADED', {
+      title: event.title,
+      slug: eventSlug,
+      endsIn: `${secondsLeftInMarket()}s`
+    });
 
-    console.log(
-      `${colors.magenta}[PAPER STRATEGY] Waiting for true 50/50 centre. ` +
-      `Orders only go live when YES and NO mids are both between ` +
-      `${CENTER_LOW.toFixed(2)} and ${CENTER_HIGH.toFixed(2)}, ` +
-      `and both asks are above $${TARGET_BID.toFixed(2)}.${colors.reset}`
-    );
+    logger.event('STRATEGY READY', {
+      mode: TRADING_MODE.toUpperCase(),
+      target: TARGET_BID.toFixed(2),
+      maxSpread: MAX_SIDE_SPREAD.toFixed(2),
+      askSumMax: MAX_COMBINED_ASKS.toFixed(2),
+      bidSumMin: MIN_COMBINED_BIDS.toFixed(2)
+    });
 
     connectWebsocket();
   } catch (e) {
-    console.log(`${colors.red}[SCANNER ERROR] ${e.message}${colors.reset}`);
+    logger.error('SCANNER ERROR', e);
     searchCooldownTimer = Date.now() + 5000;
   } finally {
     isSearchingNextMarket = false;
   }
 }
 
-// -----------------------------------------------------------------------------
-// DASHBOARD
-// -----------------------------------------------------------------------------
+// ============================================================================
+// DASHBOARD API
+// ============================================================================
+
 http.createServer((req, res) => {
   if (req.url === '/api/live') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
 
     res.end(JSON.stringify({
+      mode: TRADING_MODE,
+
       stats,
-      arbState,
-      currentAsks,
-      currentBids,
+
+      trade: {
+        active:
+          state.status === 'PLACING_ORDERS' ||
+          state.status === 'ORDERS_WORKING' ||
+          state.status === 'ONE_LEG_FILLED' ||
+          state.status === 'EXITING',
+
+        side: state.firstFilledSide || '',
+
+        entryPrice:
+          state.firstFilledSide === 'YES'
+            ? state.yesAvgFillPrice
+            : state.firstFilledSide === 'NO'
+              ? state.noAvgFillPrice
+              : 0,
+
+        status: state.status,
+        readableStatus: readableStatus(),
+        lastAction: state.lastAction
+      },
+
+      currentPrices: {
+        YES: currentAsks.YES || 0,
+        NO: currentAsks.NO || 0
+      },
+
+      currentBook: {
+        YES: {
+          ask: currentAsks.YES,
+          bid: currentBids.YES,
+          spread: bothPricesKnown() ? getSpread('YES') : 0
+        },
+        NO: {
+          ask: currentAsks.NO,
+          bid: currentBids.NO,
+          spread: bothPricesKnown() ? getSpread('NO') : 0
+        },
+        askSum: bothPricesKnown() ? askSum() : 0,
+        bidSum: bothPricesKnown() ? bidSum() : 0
+      },
+
+      state,
       recentTrades,
       currentMarketSlug,
       marketEndTime
@@ -676,24 +1238,45 @@ http.createServer((req, res) => {
     res.end(data);
   });
 }).listen(3000, '0.0.0.0', () => {
-  console.log(`${colors.cyan}[DASHBOARD] Web UI running on port 3000${colors.reset}`);
+  logger.event('DASHBOARD READY', { port: 3000 });
 });
 
-// -----------------------------------------------------------------------------
+// ============================================================================
+// STATUS LOG
+// ============================================================================
+
+function logLiveStatus() {
+  const timeoutRemaining = state.timeoutAt
+    ? Math.max(0, ((state.timeoutAt - Date.now()) / 1000)).toFixed(1)
+    : '-';
+
+  logger.status({
+    mode: TRADING_MODE.toUpperCase(),
+    status: readableStatus(),
+    left: secondsLeftInMarket(),
+    timeout: timeoutRemaining,
+    balance: money(stats.currentBalance),
+
+    yesAsk: terminalPrice(currentAsks.YES),
+    yesBid: terminalPrice(currentBids.YES),
+    yesSpread: bothPricesKnown() ? getSpread('YES').toFixed(3) : '---',
+
+    noAsk: terminalPrice(currentAsks.NO),
+    noBid: terminalPrice(currentBids.NO),
+    noSpread: bothPricesKnown() ? getSpread('NO').toFixed(3) : '---',
+
+    askSum: bothPricesKnown() ? askSum().toFixed(3) : '---',
+    bidSum: bothPricesKnown() ? bidSum().toFixed(3) : '---',
+
+    last: compactReason(state.lastAction || '-')
+  });
+}
+
+// ============================================================================
 // MAIN
-// -----------------------------------------------------------------------------
-async function runLiveTrader() {
-  console.log(
-    `${colors.magenta}Booting BTC 5m 50/50-centre sequential arb PAPER engine...${colors.reset}`
-  );
+// ============================================================================
 
-  console.log(
-    `${colors.gray}Rule: only arm around true 50/50 centre. ` +
-    `YES and NO mids must both be between ${CENTER_LOW.toFixed(2)} and ${CENTER_HIGH.toFixed(2)}. ` +
-    `Then place simulated resting bids at ${TARGET_BID}. ` +
-    `If one fills, the other has ${SECOND_LEG_TIMEOUT_MS / 1000}s to fill.${colors.reset}`
-  );
-
+async function initClobClient() {
   const account = privateKeyToAccount(rawKey);
 
   const walletClient = createWalletClient({
@@ -702,13 +1285,49 @@ async function runLiveTrader() {
     transport: viemHttp()
   });
 
-  clobClient = new ClobClient(HOST, CHAIN_ID, walletClient);
+  const base = new ClobClient(HOST, CHAIN_ID, walletClient);
 
-  try {
-    await clobClient.deriveApiKey();
-  } catch (e) {
-    await clobClient.createApiKey();
+  let creds = null;
+
+  if (typeof base.createOrDeriveApiKey === 'function') {
+    creds = await base.createOrDeriveApiKey();
+  } else if (typeof base.deriveApiKey === 'function') {
+    try {
+      creds = await base.deriveApiKey();
+    } catch (e) {
+      if (typeof base.createApiKey === 'function') {
+        creds = await base.createApiKey();
+      }
+    }
   }
+
+  if (creds) {
+    return new ClobClient(
+      HOST,
+      CHAIN_ID,
+      walletClient,
+      creds,
+      SIGNATURE_TYPE,
+      FUNDER
+    );
+  }
+
+  return base;
+}
+
+async function runTrader() {
+  logger.boot('BTC 5m real-behaviour arb engine');
+
+  logger.event('MODE READY', {
+    mode: TRADING_MODE.toUpperCase(),
+    lifecycle: 'single strategy / paper-live adapter'
+  });
+
+  clobClient = await initClobClient();
+
+  execution = IS_PAPER
+    ? new PaperExecutionAdapter()
+    : new LiveExecutionAdapter(clobClient);
 
   await loadNextMarket();
 
@@ -717,68 +1336,51 @@ async function runLiveTrader() {
 
     if (marketEndTime === 0) {
       if (now > searchCooldownTimer) await loadNextMarket();
+      logLiveStatus();
       return;
     }
 
     if (now >= marketEndTime && !isSearchingNextMarket) {
       await loadNextMarket();
+      logLiveStatus();
       return;
-    }
-
-    // Arm/timeout checks even if only one side is updating.
-    if (arbState.active && arbState.status === 'WAITING_TO_ARM') {
-      tryArmRestingLimitOrders();
-    }
-
-    if (
-      arbState.active &&
-      arbState.status === 'WAITING_SECOND_FILL' &&
-      now >= arbState.timeoutAt
-    ) {
-      bailoutUnmatchedLeg('SECOND_LEG_TIMEOUT');
     }
 
     if (bothPricesKnown()) {
       priceStream.write(
         `${new Date().toISOString()},` +
-        `${currentAsks.YES.toFixed(3)},` +
-        `${currentAsks.NO.toFixed(3)},` +
-        `${currentBids.YES.toFixed(3)},` +
-        `${currentBids.NO.toFixed(3)},` +
-        `${getMid('YES').toFixed(3)},` +
-        `${getMid('NO').toFixed(3)}\n`
+        `${currentAsks.YES.toFixed(3)},${currentBids.YES.toFixed(3)},${getSpread('YES').toFixed(3)},` +
+        `${currentAsks.NO.toFixed(3)},${currentBids.NO.toFixed(3)},${getSpread('NO').toFixed(3)},` +
+        `${askSum().toFixed(3)},${bidSum().toFixed(3)},${state.status},${state.lastAction || ''}\n`
       );
     }
 
-    if (Math.floor(now / 1000) % 10 === 0) {
-      const timeoutRemaining = arbState.timeoutAt
-        ? Math.max(0, ((arbState.timeoutAt - now) / 1000)).toFixed(1)
-        : '-';
-
-      const readableStatus = getReadableStatus();
-
-      const yesAsk = fmtPrice(currentAsks.YES);
-      const yesBid = fmtPrice(currentBids.YES);
-      const yesMid = fmtMid('YES');
-
-      const noAsk = fmtPrice(currentAsks.NO);
-      const noBid = fmtPrice(currentBids.NO);
-      const noMid = fmtMid('NO');
-
-      console.log(
-        `${colors.gray}[LIVE] ${readableStatus} | ` +
-        `${secondsLeftInMarket()}s left | ` +
-        `Timeout ${timeoutRemaining}s | ` +
-        `Bal $${stats.currentBalance.toFixed(2)} | ` +
-        `YES ask ${yesAsk}, bid ${yesBid}, mid ${yesMid} | ` +
-        `NO ask ${noAsk}, bid ${noBid}, mid ${noMid} | ` +
-        `Centre ${CENTER_LOW.toFixed(2)}-${CENTER_HIGH.toFixed(2)} | ` +
-        `Target $${TARGET_BID.toFixed(2)} | ` +
-        `Last ${arbState.lastAction || '-'}${colors.reset}`
-      );
+    if (
+      state.active &&
+      state.status === 'WAITING_FOR_CENTER' &&
+      secondsLeftInMarket() > NO_NEW_ENTRIES_SECONDS_LEFT
+    ) {
+      await maybePlaceEntryOrders();
     }
+
+    if (
+      state.active &&
+      (
+        state.status === 'ORDERS_WORKING' ||
+        state.status === 'ONE_LEG_FILLED'
+      )
+    ) {
+      await checkOrderFills();
+    }
+
+    if (state.active && state.status === 'ONE_LEG_FILLED') {
+      await handleSecondLegTimeout();
+    }
+
+    logLiveStatus();
   }, 1000);
 }
 
-runLiveTrader().catch(console.error);
-``
+runTrader().catch(err => {
+  logger.error('FATAL', err);
+});

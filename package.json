@@ -1,10 +1,12 @@
 {
   "name": "polymarket-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Polymarket BTC 5m real-behaviour paper/live bot",
   "main": "bot.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node bot.js",
+    "paper": "TRADING_MODE=paper node bot.js",
+    "live": "TRADING_MODE=live node bot.js"
   },
   "keywords": [],
   "author": "",
@@ -15,13 +17,5 @@
     "secp256k1": "^5.0.1",
     "viem": "^2.48.8",
     "ws": "^8.20.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gekko4/polymarket-bot.git"
-  },
-  "bugs": {
-    "url": "https://github.com/gekko4/polymarket-bot/issues"
-  },
-  "homepage": "https://github.com/gekko4/polymarket-bot#readme"
+  }
 }
