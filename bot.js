@@ -111,6 +111,10 @@ function blankState() {
     firstFillTime: 0,
     timeoutAt: 0,
 
+    lockedNetPnL: 0,
+    lockedAt: 0,
+    resolvedAtMarketEnd: false,
+
     lastAction: null,
     lastBlockReason: null
   };
@@ -306,15 +310,25 @@ const logger = {
   status(snapshot) {
     const now = Date.now();
 
+    // Do not spam terminal after strategy is done with the current market.
+    if (snapshot.status.includes('DONE THIS MARKET')) {
+      return;
+    }
+
+    const isActiveCountdown =
+      snapshot.status.includes('HOLDING') ||
+      snapshot.status.includes('EXITING');
+
     const key = [
       snapshot.mode,
       snapshot.status,
-      snapshot.left,
-      snapshot.timeout,
+      isActiveCountdown ? snapshot.timeout : '',
       snapshot.yesAsk,
       snapshot.yesBid,
       snapshot.noAsk,
       snapshot.noBid,
+      snapshot.askSum,
+      snapshot.bidSum,
       snapshot.last
     ].join('|');
 
@@ -329,7 +343,8 @@ const logger = {
 
     const statusColour =
       snapshot.status.includes('HOLDING') ||
-      snapshot.status.includes('ORDERS WORKING')
+      snapshot.status.includes('ORDERS WORKING') ||
+      snapshot.status.includes('ARB LOCKED')
         ? colors.cyan
         : snapshot.status.includes('WAITING')
           ? colors.yellow
@@ -343,9 +358,9 @@ const logger = {
       `${snapshot.left}s left | ` +
       `timeout ${snapshot.timeout}s | ` +
       `bal ${snapshot.balance} | ` +
-      `YES ask ${snapshot.yesAsk} bid ${snapshot.yesBid} spr ${snapshot.yesSpread} | ` +
-      `NO ask ${snapshot.noAsk} bid ${snapshot.noBid} spr ${snapshot.noSpread} | ` +
-      `sum ask ${snapshot.askSum} bid ${snapshot.bidSum} | ` +
+      `YES: ask ${snapshot.yesAsk} bid ${snapshot.yesBid} spr ${snapshot.yesSpread} | ` +
+      `NO: ask ${snapshot.noAsk} bid ${snapshot.noBid} spr ${snapshot.noSpread} | ` +
+      `sum: ask ${snapshot.askSum} bid ${snapshot.bidSum} | ` +
       `last ${snapshot.last}`
     );
   }
@@ -412,7 +427,7 @@ function readableStatus() {
     case 'ONE_LEG_FILLED':
       return `HOLDING ${state.firstFilledSide}, WAITING FOR ${opposite(state.firstFilledSide)}`;
     case 'ARB_LOCKED':
-      return 'ARB LOCKED';
+      return 'ARB LOCKED / HOLDING TO RESOLUTION';
     case 'EXITING':
       return 'EXITING UNMATCHED LEG';
     case 'DONE':
@@ -886,7 +901,7 @@ async function handleLegFilled(side) {
 
 function lockArb() {
   state.status = 'ARB_LOCKED';
-  state.lastAction = 'BOTH_LEGS_FILLED';
+  state.lastAction = 'BOTH_LEGS_FILLED_HOLDING_TO_RESOLUTION';
 
   const payoutShares = Math.min(state.yesFilledShares, state.noFilledShares);
 
@@ -896,12 +911,31 @@ function lockArb() {
 
   const netPnL = payoutShares - totalCost;
 
+  state.lockedNetPnL = netPnL;
+  state.lockedAt = Date.now();
+
   logger.event('ARB LOCKED', {
     yesShares: state.yesFilledShares.toFixed(6),
-    noShares: state.noFilledShares.toFixed(6)
+    noShares: state.noFilledShares.toFixed(6),
+    lockedPnL: pnlMoney(netPnL),
+    action: 'holding to market resolution'
+  });
+}
+
+function resolveLockedArbAtMarketEnd() {
+  if (state.status !== 'ARB_LOCKED') return;
+  if (state.resolvedAtMarketEnd) return;
+  if (Date.now() < marketEndTime) return;
+
+  state.resolvedAtMarketEnd = true;
+  state.lastAction = 'MARKET_ENDED_ARBITRAGE_RESOLVED';
+
+  logger.event('MARKET RESOLUTION', {
+    result: 'locked arb settled',
+    pnl: pnlMoney(state.lockedNetPnL)
   });
 
-  logCompletedTrade('FULL_ARBITRAGE_CAPTURE', netPnL, 0);
+  logCompletedTrade('FULL_ARBITRAGE_SETTLED_AT_MARKET_END', state.lockedNetPnL, 0);
 }
 
 async function handleSecondLegTimeout() {
@@ -1182,6 +1216,7 @@ http.createServer((req, res) => {
           state.status === 'PLACING_ORDERS' ||
           state.status === 'ORDERS_WORKING' ||
           state.status === 'ONE_LEG_FILLED' ||
+          state.status === 'ARB_LOCKED' ||
           state.status === 'EXITING',
 
         side: state.firstFilledSide || '',
@@ -1195,7 +1230,8 @@ http.createServer((req, res) => {
 
         status: state.status,
         readableStatus: readableStatus(),
-        lastAction: state.lastAction
+        lastAction: state.lastAction,
+        lockedNetPnL: state.lockedNetPnL || 0
       },
 
       currentPrices: {
@@ -1341,6 +1377,7 @@ async function runTrader() {
     }
 
     if (now >= marketEndTime && !isSearchingNextMarket) {
+      resolveLockedArbAtMarketEnd();
       await loadNextMarket();
       logLiveStatus();
       return;
