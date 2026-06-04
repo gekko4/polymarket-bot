@@ -20,6 +20,7 @@
             --accent-cyan-glow: rgba(14, 165, 233, 0.4);
             --accent-green: #10b981;
             --accent-red: #ef4444;
+            --accent-purple: #a855f7;
             
             --font-ui: 'Inter', sans-serif;
             --font-mono: 'Ubuntu Mono', monospace;
@@ -40,10 +41,7 @@
             align-items: center;
         }
 
-        .container {
-            width: 100%;
-            max-width: 600px;
-        }
+        .container { width: 100%; max-width: 600px; }
 
         .header-container {
             text-align: center;
@@ -53,7 +51,6 @@
             justify-content: center;
         }
 
-        /* Reusable Gold Gradient Class */
         .gold-gradient-text {
             background: linear-gradient(90deg, #f59e0b, #fcd34d, #fef08a);
             -webkit-background-clip: text;
@@ -103,7 +100,6 @@
             letter-spacing: -1px;
         }
 
-        /* Upgraded ROI Subcard */
         .roi-subcard { 
             font-family: var(--font-mono);
             padding: 10px 20px; 
@@ -150,163 +146,74 @@
             box-shadow: 0 8px 32px rgba(0,0,0,0.2); 
             transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
         }
-
-        .card:hover {
-            border-color: rgba(14, 165, 233, 0.4);
-            box-shadow: 0 8px 32px rgba(14, 165, 233, 0.05);
-        }
-
+        .card:hover { border-color: rgba(14, 165, 233, 0.4); box-shadow: 0 8px 32px rgba(14, 165, 233, 0.05); }
         .card.full-width { grid-column: 1 / -1; }
 
-        /* Replaced borders with clean indicator dots */
         .card h2 { 
-            margin-top: 0; 
-            font-size: 0.75rem; 
-            font-weight: 600;
-            color: var(--text-muted); 
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            margin-bottom: 16px; 
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            margin-top: 0; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); 
+            text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 16px; 
+            display: flex; align-items: center; gap: 8px;
         }
-
         .card h2::before {
-            content: '';
-            display: block;
-            width: 4px;
-            height: 4px;
-            border-radius: 50%;
-            background-color: var(--accent-cyan);
-            box-shadow: 0 0 8px var(--accent-cyan-glow);
+            content: ''; display: block; width: 4px; height: 4px; border-radius: 50%;
+            background-color: var(--accent-cyan); box-shadow: 0 0 8px var(--accent-cyan-glow);
         }
 
-        .metric-value { 
-            font-family: var(--font-mono);
-            font-size: 1.6rem; 
-            font-weight: 700; 
-            letter-spacing: -0.5px;
-        }
-        
+        .metric-value { font-family: var(--font-mono); font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
         #winrate-pct { color: var(--accent-cyan); }
 
-        .metric-sub {
-            font-family: var(--font-mono);
-            font-size: 0.8rem; 
-            color: var(--text-muted);
-            margin-top: 4px;
-        }
+        .metric-sub { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
 
         .green { color: var(--accent-green); } 
         .red { color: var(--accent-red); } 
         .cyan { color: var(--accent-cyan); }
+        .purple { color: var(--accent-purple); }
         .font-mono { font-family: var(--font-mono); }
 
         .market-prices {
-            display: flex; 
-            justify-content: space-between; 
-            font-size: 0.95rem;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px dashed rgba(255,255,255,0.05);
+            display: flex; justify-content: space-between; font-size: 0.95rem;
+            margin-top: 16px; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.05);
         }
 
         .price-tag {
-            background: rgba(0,0,0,0.3);
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-family: var(--font-mono);
-            font-size: 0.9rem;
-            border: 1px solid rgba(255,255,255,0.05);
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            background: rgba(0,0,0,0.3); padding: 6px 12px; border-radius: 8px;
+            font-family: var(--font-mono); font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.05);
+            display: flex; align-items: center; gap: 8px;
         }
 
         .trade-row { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            font-size: 0.9rem; 
-            padding: 12px 0; 
-            border-bottom: 1px solid rgba(255,255,255,0.05); 
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.9rem; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); 
         }
         .trade-row:last-child { border-bottom: none; padding-bottom: 0; }
         
-        .trade-time { 
-            font-family: var(--font-mono);
-            color: var(--text-muted); 
-            font-size: 0.75rem; 
-            margin-bottom: 4px; 
-            letter-spacing: 0.5px;
-        }
-        
-        .trade-reason { 
-            font-weight: 600; 
-            font-size: 0.85rem;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
+        .trade-time { font-family: var(--font-mono); color: var(--text-muted); font-size: 0.75rem; margin-bottom: 4px; letter-spacing: 0.5px;}
+        .trade-reason { font-weight: 600; font-size: 0.75rem; letter-spacing: 0.5px; text-transform: uppercase; max-width: 150px; line-height: 1.2;}
 
-        .trade-metrics {
-            text-align: right;
-            font-family: var(--font-mono);
-        }
+        .trade-metrics { text-align: right; font-family: var(--font-mono); }
+        .trade-route { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; justify-content: flex-end; gap: 6px;}
+        .pnl-display { font-size: 1rem; font-weight: 700; }
 
-        .trade-route {
-            font-size: 0.8rem; 
-            color: var(--text-muted); 
-            margin-bottom: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 6px;
-        }
+        .empty-history { opacity: 0.8; font-size: 0.9rem; text-align: center; padding: 16px 0; font-family: var(--font-mono); }
 
-        .pnl-display {
-            font-size: 1rem;
-            font-weight: 700;
-        }
-
-        .empty-history {
-            opacity: 0.8;
-            font-size: 0.9rem;
-            text-align: center;
-            padding: 16px 0;
-            font-family: var(--font-mono);
-        }
-
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeDown {
-            from { opacity: 0; transform: translateY(-15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeDown { from { opacity: 0; transform: translateY(-15px); } to { opacity: 1; transform: translateY(0); } }
         
         .pulse {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 10px;
-            background: #fcd34d;
-            box-shadow: 0 0 12px rgba(252, 211, 77, 0.4);
-            animation: blink 1.5s infinite;
+            display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 10px;
+            background: #fcd34d; box-shadow: 0 0 12px rgba(252, 211, 77, 0.4); animation: blink 1.5s infinite;
         }
-        .pulse.active { 
-            background: var(--accent-cyan); 
-            box-shadow: 0 0 12px var(--accent-cyan-glow); 
-        }
+        .pulse.cyan { background: var(--accent-cyan); box-shadow: 0 0 12px var(--accent-cyan-glow); }
+        .pulse.purple { background: var(--accent-purple); box-shadow: 0 0 12px var(--accent-purple); animation: blink 0.5s infinite;}
+        .pulse.gray { background: #475569; box-shadow: none; animation: none;}
+
         @keyframes blink { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-container">
-            <h1 class="gold-gradient-text">PolyBot Terminal</h1>
+            <h1 class="gold-gradient-text">Fast-Hedge Protocol</h1>
         </div>
 
         <div class="hero-section">
@@ -318,13 +225,13 @@
         <div class="grid-container">
             <div class="card full-width">
                 <h2>Algo Status</h2>
-                <div class="metric-value" style="font-size: 1.2rem; display: flex; align-items: center;">
+                <div class="metric-value" style="font-size: 1.1rem; display: flex; align-items: center;">
                     <div id="pulse-indicator" class="pulse"></div>
                     <span id="status" class="gold-gradient-text" style="letter-spacing: 0.5px;">INITIALIZING SYSTEMS...</span>
                 </div>
                 <div class="market-prices">
-                    <div class="price-tag"><span class="text-muted">YES</span> <span id="yes-price" class="cyan font-mono">0¢</span></div>
-                    <div class="price-tag"><span class="text-muted">NO</span> <span id="no-price" class="gold-gradient-text font-mono">0¢</span></div>
+                    <div class="price-tag"><span class="text-muted">YES ASK</span> <span id="yes-price" class="cyan font-mono">0¢</span></div>
+                    <div class="price-tag"><span class="text-muted">NO ASK</span> <span id="no-price" class="cyan font-mono">0¢</span></div>
                 </div>
             </div>
 
@@ -337,7 +244,7 @@
             <div class="card">
                 <h2>Executions</h2>
                 <div id="total-trades" class="metric-value gold-gradient-text" style="display: block;">0</div>
-                <div class="metric-sub">Total Settled</div>
+                <div class="metric-sub">Pairs Settled</div>
             </div>
 
             <div class="card full-width" style="animation-delay: 0.1s;">
@@ -368,51 +275,64 @@
                 document.getElementById('winrate-details').innerText = data.stats.wins + 'W / ' + data.stats.losses + 'L';
                 document.getElementById('total-trades').innerText = data.stats.totalTrades;
 
-                // Update Status & Prices
+                // Update Status & Pulse Indicator
                 const statusEl = document.getElementById('status');
                 const pulseEl = document.getElementById('pulse-indicator');
                 
-                if (data.trade.active) {
-                    pulseEl.className = 'pulse active';
-                    const entryCents = Math.round(data.trade.entryPrice * 100);
-                    // Standard inline cyan for holding status
-                    statusEl.innerHTML = '<span class="cyan">HOLDING ' + data.trade.side + '</span> <span style="color:var(--text-muted);font-weight:400;margin-left:8px;">@ ' + entryCents + '¢</span>';
-                    statusEl.className = ''; 
-                } else {
-                    pulseEl.className = 'pulse';
-                    // Re-apply gold gradient class for awaiting state
-                    statusEl.innerHTML = 'AWAITING SIGNAL';
-                    statusEl.className = 'gold-gradient-text';
+                switch(data.arb.status) {
+                    case 'WAITING_FOR_MARKET':
+                        pulseEl.className = 'pulse';
+                        statusEl.className = 'gold-gradient-text';
+                        statusEl.innerHTML = 'SCANNING NEXT MARKET';
+                        break;
+                    case 'ORDERS_LIVE':
+                        pulseEl.className = 'pulse cyan';
+                        statusEl.className = 'cyan';
+                        statusEl.innerHTML = '0.48 LIMIT PAIR LIVE';
+                        break;
+                    case 'ONE_SIDE_FILLED':
+                        pulseEl.className = 'pulse purple';
+                        statusEl.className = 'purple';
+                        statusEl.innerHTML = '1 LEG FILLED - HEDGE TIMER';
+                        break;
+                    case 'PAIR_COMPLETED_AT_48':
+                    case 'PAIR_COMPLETED_BY_HEDGE':
+                    case 'ABORTED_OR_CANCELLED':
+                        pulseEl.className = 'pulse gray';
+                        statusEl.className = '';
+                        statusEl.style.color = 'var(--text-muted)';
+                        statusEl.innerHTML = 'CYCLE COMPLETE - WAITING';
+                        break;
+                    default:
+                        break;
                 }
 
+                // Prices
                 document.getElementById('yes-price').innerText = Math.round(data.currentPrices.YES * 100) + '¢';
                 document.getElementById('no-price').innerText = Math.round(data.currentPrices.NO * 100) + '¢';
 
-                // Update History
+                // Update History Ledger
                 if (data.recentTrades && data.recentTrades.length > 0) {
                     let html = '';
                     data.recentTrades.forEach(t => {
-                        const pnlColor = t.pnl > 0 ? 'green' : 'red';
-                        const pnlSign = t.pnl > 0 ? '+' : '';
+                        const isWin = t.pnl > 0;
+                        const pnlColor = isWin ? 'green' : 'red';
+                        const pnlSign = isWin ? '+' : '';
                         
-                        const entryCents = Math.round(parseFloat(t.entry) * 100);
-                        const exitCents = Math.round(parseFloat(t.exit) * 100);
-
                         let reasonColor = 'var(--accent-cyan)';
-                        const reasonUpper = t.reason.toUpperCase();
-                        if (reasonUpper.includes('BUY') || reasonUpper.includes('PROFIT') || reasonUpper.includes('ENTRY')) {
-                            reasonColor = 'var(--accent-green)';
-                        } else if (reasonUpper.includes('SELL') || reasonUpper.includes('LOSS') || reasonUpper.includes('STOP') || reasonUpper.includes('EXIT')) {
-                            reasonColor = 'var(--accent-red)';
-                        }
+                        if (t.reason.includes('HEDGE')) reasonColor = 'var(--accent-purple)';
+                        if (t.reason.includes('ABORTED')) reasonColor = 'var(--accent-red)';
+                        if (t.reason.includes('48')) reasonColor = 'var(--accent-green)';
+
+                        const cleanedReason = t.reason.replace('PAIR_', '').replace(/_/g, ' ');
 
                         html += `<div class="trade-row">
                                     <div>
                                         <div class="trade-time">${t.time}</div>
-                                        <div class="trade-reason" style="color: ${reasonColor}">${t.reason}</div>
+                                        <div class="trade-reason" style="color: ${reasonColor}">${cleanedReason}</div>
                                     </div>
                                     <div class="trade-metrics">
-                                        <div class="trade-route">${entryCents}¢ <span style="color: var(--text-muted)">→</span> ${exitCents}¢</div>
+                                        <div class="trade-route">Cost $${parseFloat(t.entry).toFixed(2)} <span style="color: var(--text-muted)">→</span> Ret $${parseFloat(t.exit).toFixed(2)}</div>
                                         <div class="pnl-display ${pnlColor}">${pnlSign}$${Math.abs(t.pnl).toFixed(4)}</div>
                                     </div>
                                   </div>`;
@@ -420,10 +340,10 @@
                     document.getElementById('history').innerHTML = html;
                 }
             } catch (e) { 
-                console.error("Sync error", e); 
+                console.error("Dashboard sync error", e); 
             }
         }
-        setInterval(updateDashboard, 1500);
+        setInterval(updateDashboard, 1000);
         updateDashboard();
     </script>
 </body>

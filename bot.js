@@ -28,17 +28,30 @@ if (!rawKey.startsWith('0x')) rawKey = '0x' + rawKey;
 const CHAIN_ID = 137;
 const HOST = 'https://clob.polymarket.com';
 
-// --- PAPER ARB CONFIG ---
-const BET_SIZE_USD = 1.00;                 // Per-leg notional
-const TAKER_FEE_BPS = 180;                 // Used only for simulated bailout sells
-const PAPER_LIMIT_FEE_BPS = 0;             // Simulated passive limit-buy fee assumption
-const ARB_LIMIT_PRICE = 0.48;              // User-requested YES and NO paper limit price
-const ARB_UNFILLED_TIMEOUT_MS = 2 * 60 * 1000;
-const ARB_MIN_SECONDS_LEFT_TO_START = 130; // Timeout + small expiry buffer
-const ARB_SHARES = parseFloat((BET_SIZE_USD / ARB_LIMIT_PRICE).toFixed(2));
+// --- FAST-HEDGE STRATEGY CONFIGURATION ---
+const ENTRY_PRICE = 0.48;                  // Centre entry level for YES and NO
+const HEDGE_DELAY_SECONDS = 2.0;           // Maximum time to remain naked after first fill
+const MAX_HEDGE_PRICE = 0.60;              // Configurable safety cap to prevent unacceptable loss
+const BET_SIZE_USD = 5.00;                 // Base allocation per market attempt
+const ARB_SHARES = parseFloat((BET_SIZE_USD / ENTRY_PRICE).toFixed(2));
+const ONE_TRADE_ATTEMPT_PER_MARKET = true; // Duplicate order protection
 
-// --- PAPER TRADING STATE & STATS ---
-let trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
+// --- FEE ASSUMPTIONS (For Paper Gross/Net PnL) ---
+const TAKER_FEE_BPS = 180;                 // Applied to market/hedge orders
+const PAPER_LIMIT_FEE_BPS = 0;             // Applied to resting 0.48 limit orders
+
+// --- SYSTEM STATES ---
+const STATES = {
+    WAITING_FOR_MARKET: 'WAITING_FOR_MARKET',
+    ORDERS_LIVE: 'ORDERS_LIVE',
+    ONE_SIDE_FILLED: 'ONE_SIDE_FILLED',
+    PAIR_COMPLETED_AT_48: 'PAIR_COMPLETED_AT_48',
+    PAIR_COMPLETED_BY_HEDGE: 'PAIR_COMPLETED_BY_HEDGE',
+    ABORTED_OR_CANCELLED: 'ABORTED_OR_CANCELLED'
+};
+
+// --- GLOBAL STATE ---
+let arb = createEmptyArbState();
 let stats = {
     totalTrades: 0,
     wins: 0,
@@ -47,42 +60,19 @@ let stats = {
     currentBalance: 100.00
 };
 
-let lastMidpoint = { YES: 0, NO: 0 };
-let trend = { YES: 0, NO: 0 };
-let currentPrices = { YES: 0, NO: 0 }; // Kept for dashboard compatibility; stores best ask
+let currentPrices = { YES: 0, NO: 0 }; 
 let currentBooks = {
     YES: { ask: 0, askSize: 0, bid: 0, bidSize: 0 },
     NO:  { ask: 0, askSize: 0, bid: 0, bidSize: 0 }
 };
 
 let recentTrades = [];
-let isExecuting = false;
-let isExiting = false;
 let isSearchingNextMarket = false;
 let searchCooldownTimer = 0;
-let postTradeCooldown = 0;
 let currentYesToken = null;
 let currentNoToken = null;
 let marketEndTime = 0;
 let clobClient;
-
-function createEmptyArbCycle() {
-    return {
-        active: false,
-        status: 'IDLE', // IDLE | WORKING | ONE_LEG_FILLED | LOCKED | CLOSING
-        startedAt: 0,
-        hedgeDeadline: 0,
-        orders: {
-            YES: null,
-            NO: null
-        },
-        positions: {
-            YES: null,
-            NO: null
-        }
-    };
-}
-let arb = createEmptyArbCycle();
 
 // --- ASYNC LOGGING STREAMS ---
 const tradeLogFile = 'paper_trades_log.csv';
@@ -93,7 +83,7 @@ const tradeStream = fs.createWriteStream(tradeLogFile, { flags: 'a' });
 const priceStream = fs.createWriteStream(priceLogFile, { flags: 'a' });
 const terminalStream = fs.createWriteStream(terminalLogFile, { flags: 'a' });
 
-// --- ZERO-LAG TERMINAL LOGGING ---
+// Overwrite console.log for file logging
 const originalLog = console.log;
 console.log = function (...args) {
     originalLog.apply(console, args);
@@ -103,10 +93,22 @@ console.log = function (...args) {
 };
 
 if (!fs.existsSync(tradeLogFile) || fs.statSync(tradeLogFile).size === 0) {
-    tradeStream.write("Date,Market,Action,Entry_Price,Exit_Price,Shares,PnL_USD,Balance_USD,Win_Rate_Pct\n");
+    tradeStream.write("Date,Market,Status,Entry_Cost,Exit_Payout,Shares,Net_PnL_USD,Balance_USD,Win_Rate_Pct\n");
 }
 if (!fs.existsSync(priceLogFile) || fs.statSync(priceLogFile).size === 0) {
     priceStream.write("Timestamp,YES_Ask,NO_Ask\n");
+}
+
+function createEmptyArbState() {
+    return {
+        status: STATES.WAITING_FOR_MARKET,
+        attempted: false,
+        startedAt: 0,
+        firstFillTime: 0,
+        firstFillSide: null,
+        orders: { YES: null, NO: null },
+        positions: { YES: null, NO: null }
+    };
 }
 
 function tokenForSide(side) {
@@ -119,151 +121,135 @@ function sideForToken(tokenId) {
     return null;
 }
 
-function getFilledSides() {
-    return ['YES', 'NO'].filter(side => arb.positions[side] !== null);
-}
-
-function resetPaperTradeMirror() {
-    trade = { active: false, side: null, tokenId: null, entryPrice: 0, shares: 0, entryTime: 0 };
-}
-
-function resetArbCycle() {
-    arb = createEmptyArbCycle();
-    resetPaperTradeMirror();
-    isExecuting = false;
-    isExiting = false;
-}
-
 function createLimitBuyOrder(side, now) {
     return {
         side,
         tokenId: tokenForSide(side),
-        action: 'BUY',
         type: 'LIMIT',
-        price: ARB_LIMIT_PRICE,
+        price: ENTRY_PRICE,
         shares: ARB_SHARES,
         status: 'OPEN',
-        placedAt: now,
-        filledAt: 0,
-        fillPrice: 0,
-        cancelReason: null
+        placedAt: now
     };
 }
 
-function startArbCycle(now, secondsLeft) {
-    if (arb.active) return;
-    if (isExecuting || isExiting) return;
-    if (Date.now() < postTradeCooldown) return;
+// 1. ENTRY RULE
+function startArbCycle(now) {
+    if (arb.status !== STATES.WAITING_FOR_MARKET) return;
+    if (ONE_TRADE_ATTEMPT_PER_MARKET && arb.attempted) return;
     if (!currentYesToken || !currentNoToken) return;
-    if (secondsLeft <= ARB_MIN_SECONDS_LEFT_TO_START) return;
 
-    // Require both books to be populated before placing the paired paper orders.
-    if (currentBooks.YES.ask <= 0 || currentBooks.YES.bid <= 0) return;
-    if (currentBooks.NO.ask <= 0 || currentBooks.NO.bid <= 0) return;
+    // Wait for initial book data
+    if (currentBooks.YES.ask <= 0 || currentBooks.NO.ask <= 0) return;
 
-    arb.active = true;
-    arb.status = 'WORKING';
+    arb.attempted = true;
+    arb.status = STATES.ORDERS_LIVE;
     arb.startedAt = now;
     arb.orders.YES = createLimitBuyOrder('YES', now);
     arb.orders.NO = createLimitBuyOrder('NO', now);
 
-    trade = {
-        active: true,
-        side: 'YES+NO LIMIT ARB',
-        tokenId: 'PAIR',
-        entryPrice: ARB_LIMIT_PRICE,
-        shares: ARB_SHARES,
-        entryTime: now
-    };
-
-    console.log(`\n${colors.cyan}[ARB START] PAPER limit BUY YES @ $${ARB_LIMIT_PRICE.toFixed(2)} and NO @ $${ARB_LIMIT_PRICE.toFixed(2)} | Shares/leg: ${ARB_SHARES}${colors.reset}`);
+    console.log(`\n${colors.cyan}[${STATES.ORDERS_LIVE}] Placed YES and NO limits @ $${ENTRY_PRICE} | Size: ${ARB_SHARES}${colors.reset}`);
 }
 
+// Paper fill model
 function paperLimitBuyWouldFill(order) {
     if (!order || order.status !== 'OPEN') return false;
     const book = currentBooks[order.side];
-
-    // Paper fill model: a resting buy limit is considered filled when visible ask <= limit
-    // with enough visible size. This avoids pretending to know maker queue position.
     return book.ask > 0 && book.ask <= order.price && book.askSize >= order.shares;
 }
 
-function fillPaperLimitBuy(side, now) {
-    const order = arb.orders[side];
-    if (!order || order.status !== 'OPEN') return;
-
-    order.status = 'FILLED';
-    order.filledAt = now;
-    order.fillPrice = order.price;
-
-    arb.positions[side] = {
-        side,
-        tokenId: order.tokenId,
-        entryPrice: order.fillPrice,
-        shares: order.shares,
-        entryTime: now
-    };
-
-    const filledSides = getFilledSides();
-
-    if (filledSides.length === 1) {
-        arb.status = 'ONE_LEG_FILLED';
-        arb.hedgeDeadline = now + ARB_UNFILLED_TIMEOUT_MS;
-        const filledSide = filledSides[0];
-
-        trade = {
-            active: true,
-            side: `${filledSide} FILLED / WAITING OTHER LEG`,
-            tokenId: arb.positions[filledSide].tokenId,
-            entryPrice: arb.positions[filledSide].entryPrice,
-            shares: arb.positions[filledSide].shares,
-            entryTime: now
-        };
-
-        console.log(`${colors.brightYellow}[ARB LEG FILLED] ${filledSide} filled @ $${order.fillPrice.toFixed(2)}. Waiting for the other side until ${new Date(arb.hedgeDeadline).toLocaleTimeString()}.${colors.reset}`);
-    }
-
-    if (filledSides.length === 2) {
-        arb.status = 'LOCKED';
-        arb.hedgeDeadline = 0;
-
-        trade = {
-            active: true,
-            side: 'LOCKED YES+NO ARB',
-            tokenId: 'PAIR',
-            entryPrice: ARB_LIMIT_PRICE,
-            shares: ARB_SHARES,
-            entryTime: arb.startedAt
-        };
-
-        console.log(`${colors.green}[ARB LOCKED] YES and NO both filled @ $${ARB_LIMIT_PRICE.toFixed(2)}. Pair will be settled at expiry in paper mode.${colors.reset}`);
-    }
-}
-
+// 2. MONITOR FILLS
 function checkPaperLimitFills(now) {
-    if (!arb.active) return;
-    if (arb.status !== 'WORKING' && arb.status !== 'ONE_LEG_FILLED') return;
+    if (arb.status !== STATES.ORDERS_LIVE && arb.status !== STATES.ONE_SIDE_FILLED) return;
 
     for (const side of ['YES', 'NO']) {
         const order = arb.orders[side];
-        if (paperLimitBuyWouldFill(order)) {
-            fillPaperLimitBuy(side, now);
+        if (order && order.status === 'OPEN' && paperLimitBuyWouldFill(order)) {
+            order.status = 'FILLED';
+            arb.positions[side] = { shares: order.shares, entryPrice: ENTRY_PRICE, isTaker: false };
+
+            const filledSides = Object.keys(arb.positions).filter(k => arb.positions[k] !== null);
+
+            if (filledSides.length === 1) {
+                arb.status = STATES.ONE_SIDE_FILLED;
+                arb.firstFillSide = side;
+                arb.firstFillTime = now;
+                console.log(`${colors.brightYellow}[${STATES.ONE_SIDE_FILLED}] ${side} filled at $${ENTRY_PRICE}. Started ${HEDGE_DELAY_SECONDS}s hedge timer!${colors.reset}`);
+            } 
+            else if (filledSides.length === 2) {
+                arb.status = STATES.PAIR_COMPLETED_AT_48;
+                console.log(`${colors.green}[${STATES.PAIR_COMPLETED_AT_48}] Both sides filled at $${ENTRY_PRICE}!${colors.reset}`);
+                recordCompletedPair(STATES.PAIR_COMPLETED_AT_48);
+            }
         }
     }
 }
 
-function cancelOpenLegs(reason) {
-    for (const side of ['YES', 'NO']) {
-        const order = arb.orders[side];
-        if (order && order.status === 'OPEN') {
-            order.status = 'CANCELLED';
-            order.cancelReason = reason;
-            console.log(`${colors.gray}[ARB CANCEL] ${side} unfilled paper order cancelled. Reason: ${reason}${colors.reset}`);
+// 3. FAST-HEDGE / CUT-RISK RULE
+function handleHedgeTimer(now) {
+    if (arb.status === STATES.ONE_SIDE_FILLED) {
+        const elapsedSeconds = (now - arb.firstFillTime) / 1000;
+        
+        if (elapsedSeconds >= HEDGE_DELAY_SECONDS) {
+            const oppositeSide = arb.firstFillSide === 'YES' ? 'NO' : 'YES';
+            const hedgeAsk = currentBooks[oppositeSide].ask;
+
+            arb.orders[oppositeSide].status = 'CANCELLED';
+
+            // Risk check: Max Hedge Price
+            if (hedgeAsk > 0 && hedgeAsk <= MAX_HEDGE_PRICE) {
+                arb.positions[oppositeSide] = { shares: ARB_SHARES, entryPrice: hedgeAsk, isTaker: true };
+                arb.status = STATES.PAIR_COMPLETED_BY_HEDGE;
+                console.log(`${colors.magenta}[${STATES.PAIR_COMPLETED_BY_HEDGE}] Timer expired. Hedged ${oppositeSide} at $${hedgeAsk.toFixed(3)}${colors.reset}`);
+                recordCompletedPair(STATES.PAIR_COMPLETED_BY_HEDGE);
+            } else {
+                arb.status = STATES.ABORTED_OR_CANCELLED;
+                const reason = hedgeAsk <= 0 ? "STALE_DATA_NO_QUOTES" : "HEDGE_PRICE_ABOVE_MAX";
+                console.log(`${colors.red}[RISK TRIGGERED] ${reason}. Ask was $${hedgeAsk}. Liquidating naked leg!${colors.reset}`);
+                liquidateNakedLeg(reason);
+            }
         }
     }
 }
 
-function recordPaperArbResult(reason, pnl, entryDisplay, exitDisplay, sharesDisplay = ARB_SHARES) {
+// Settlement calculation for completed pairs
+function recordCompletedPair(status) {
+    const yesPos = arb.positions.YES;
+    const noPos = arb.positions.NO;
+
+    const payout = 1.00 * ARB_SHARES;
+    const costYES = yesPos.entryPrice * yesPos.shares;
+    const costNO = noPos.entryPrice * noPos.shares;
+    
+    const feeYES = yesPos.isTaker ? costYES * (TAKER_FEE_BPS / 10000) : costYES * (PAPER_LIMIT_FEE_BPS / 10000);
+    const feeNO = noPos.isTaker ? costNO * (TAKER_FEE_BPS / 10000) : costNO * (PAPER_LIMIT_FEE_BPS / 10000);
+
+    const totalCost = costYES + costNO;
+    const totalFees = feeYES + feeNO;
+    const netPnL = payout - totalCost - totalFees;
+
+    finalizeTradeRecord(status, netPnL, totalCost, payout, ARB_SHARES);
+}
+
+// Emergency sell for aborted hedges
+function liquidateNakedLeg(reason) {
+    const filledSide = arb.firstFillSide;
+    const pos = arb.positions[filledSide];
+    const bid = currentBooks[filledSide].bid > 0 ? currentBooks[filledSide].bid : 0.01; // Worst case dump
+
+    const cost = pos.entryPrice * pos.shares;
+    const entryFee = cost * (PAPER_LIMIT_FEE_BPS / 10000);
+    
+    const payout = bid * pos.shares;
+    const exitFee = payout * (TAKER_FEE_BPS / 10000);
+
+    const netPnL = payout - cost - entryFee - exitFee;
+    
+    finalizeTradeRecord(`ABORTED: ${reason}`, netPnL, cost, payout, pos.shares);
+}
+
+// Universal metric tracking and writing
+function finalizeTradeRecord(status, pnl, costDisplay, payoutDisplay, shares) {
     stats.totalTrades++;
     if (pnl > 0) stats.wins++;
     else stats.losses++;
@@ -274,131 +260,46 @@ function recordPaperArbResult(reason, pnl, entryDisplay, exitDisplay, sharesDisp
     const c = pnl > 0 ? colors.brightYellow : colors.red;
 
     console.log(`\n${colors.gray}========================================${colors.reset}`);
-    console.log(`[ARB CLOSED] Reason: ${c}${reason}${colors.reset}`);
-    console.log(`Display Entry: $${entryDisplay.toFixed(3)} | Display Exit: $${exitDisplay.toFixed(3)}`);
+    console.log(`[TRADE CLOSED] Status: ${status}`);
+    console.log(`Total Deployment: $${costDisplay.toFixed(3)} | Payout/Recovery: $${payoutDisplay.toFixed(3)}`);
     console.log(`NET PnL: ${c}$${pnl > 0 ? '+' : ''}${pnl.toFixed(4)}${colors.reset}`);
     console.log(`${colors.gray}---${colors.reset}`);
     console.log(`[STATS] Balance: $${stats.currentBalance.toFixed(2)} (${roi > 0 ? '+' : ''}${roi}% ROI)`);
     console.log(`[STATS] Win Rate: ${winRate}% (${stats.wins}W / ${stats.losses}L)`);
     console.log(`${colors.gray}========================================\n${colors.reset}`);
 
-    const logEntry = `${new Date().toISOString()},BTC-5M,${reason},${entryDisplay},${exitDisplay},${sharesDisplay},${pnl.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`;
-    tradeStream.write(logEntry);
+    tradeStream.write(`${new Date().toISOString()},BTC-5M,${status},${costDisplay.toFixed(4)},${payoutDisplay.toFixed(4)},${shares},${pnl.toFixed(4)},${stats.currentBalance.toFixed(2)},${winRate}%\n`);
 
     recentTrades.unshift({
         time: new Date().toLocaleTimeString(),
-        reason,
-        entry: entryDisplay.toFixed(3),
-        exit: exitDisplay.toFixed(3),
+        reason: status,
+        entry: costDisplay.toFixed(3),
+        exit: payoutDisplay.toFixed(3),
         pnl
     });
     if (recentTrades.length > 10) recentTrades.pop();
-
-    resetArbCycle();
 }
 
-function closeSingleFilledLeg(reason) {
-    if (!arb.active || arb.status !== 'ONE_LEG_FILLED') return;
-
-    const filledSides = getFilledSides();
-    if (filledSides.length !== 1) return;
-
-    const side = filledSides[0];
-    const pos = arb.positions[side];
-    if (!pos) return;
-
-    const book = currentBooks[side];
-    const exitPrice = book.bid > 0 ? book.bid : 0.01;
-
-    arb.status = 'CLOSING';
-    isExiting = true;
-    cancelOpenLegs(reason);
-
-    const entryCost = pos.entryPrice * pos.shares;
-    const grossReturn = exitPrice * pos.shares;
-    const entryFee = entryCost * (PAPER_LIMIT_FEE_BPS / 10000);
-    const exitFee = grossReturn * (TAKER_FEE_BPS / 10000);
-    const pnl = (grossReturn - entryCost) - entryFee - exitFee;
-
-    console.log(`${colors.red}[ARB TIMEOUT EXIT] ${side} counterpart did not fill. PAPER selling ${side} @ best bid $${exitPrice.toFixed(3)}.${colors.reset}`);
-    recordPaperArbResult(reason, pnl, pos.entryPrice, exitPrice, pos.shares);
-}
-
-function settleLockedArbAtExpiry() {
-    if (!arb.active || arb.status !== 'LOCKED') return;
-
-    const yes = arb.positions.YES;
-    const no = arb.positions.NO;
-    if (!yes || !no) return;
-
-    const matchedShares = Math.min(yes.shares, no.shares);
-    const totalCost = (yes.entryPrice * matchedShares) + (no.entryPrice * matchedShares);
-    const paperPayout = matchedShares * 1.00;
-    const entryFees = totalCost * (PAPER_LIMIT_FEE_BPS / 10000);
-    const pnl = paperPayout - totalCost - entryFees;
-
-    const avgEntry = (yes.entryPrice + no.entryPrice) / 2;
-    const displayExit = 0.50;
-
-    recordPaperArbResult('LOCKED ARB SETTLED', pnl, avgEntry, displayExit, matchedShares);
-}
-
-function handleArbTimer(now) {
-    if (!arb.active) return;
-
-    const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
-
-    if (arb.status === 'ONE_LEG_FILLED' && arb.hedgeDeadline > 0 && now >= arb.hedgeDeadline) {
-        closeSingleFilledLeg('UNFILLED LEG TIMEOUT');
-        return;
-    }
-
-    if (arb.status === 'ONE_LEG_FILLED' && secondsLeft <= 8) {
-        closeSingleFilledLeg('EXPIRY SINGLE-LEG BAILOUT');
-        return;
-    }
-
-    if (arb.status === 'LOCKED' && secondsLeft <= 0) {
-        settleLockedArbAtExpiry();
-    }
-}
-
+// Main tick entrypoint from websocket
 function handleMarketUpdate(data) {
-    if (!data) return;
-
-    const bestAsk = data.bestAsk;
-    const bestAskSize = data.bestAskSize;
-    const bestBid = data.bestBid;
-    const bestBidSize = data.bestBidSize;
-
-    if (isNaN(bestAsk) || isNaN(bestBid)) return;
+    if (!data || isNaN(data.bestAsk) || isNaN(data.bestBid)) return;
 
     const side = sideForToken(data.asset_id);
     if (!side) return;
 
     const now = Date.now();
-    const secondsLeft = Math.max(0, Math.floor((marketEndTime - now) / 1000));
-
-    currentPrices[side] = bestAsk;
+    currentPrices[side] = data.bestAsk; // For dashboard view
     currentBooks[side] = {
-        ask: bestAsk,
-        askSize: bestAskSize || 0,
-        bid: bestBid,
-        bidSize: bestBidSize || 0
+        ask: data.bestAsk,
+        askSize: data.bestAskSize || 0,
+        bid: data.bestBid,
+        bidSize: data.bestBidSize || 0
     };
 
-    const currentMid = (bestAsk + bestBid) / 2;
-    if (lastMidpoint[side] !== 0) {
-        trend[side] = currentMid - lastMidpoint[side];
-    }
-    lastMidpoint[side] = currentMid;
-
-    // Match your old bot's behaviour: do not operate in the first 30 seconds of the 5-minute market.
-    if (secondsLeft > 270) return;
-
-    startArbCycle(now, secondsLeft);
+    // Fast-Hedge State Machine execution
+    startArbCycle(now);
     checkPaperLimitFills(now);
-    handleArbTimer(now);
+    handleHedgeTimer(now);
 }
 
 function connectWebsocket() {
@@ -406,7 +307,7 @@ function connectWebsocket() {
         try { global.wsMarket.terminate(); } catch (e) {}
     }
 
-    console.log(`${colors.yellow}[WS] Booting fresh market connection...${colors.reset}`);
+    console.log(`${colors.yellow}[WS] Booting market connection...${colors.reset}`);
     const wsMarket = new WebSocket('wss://ws-subscriptions-clob.polymarket.com/ws/market');
     global.wsMarket = wsMarket;
 
@@ -437,7 +338,7 @@ function connectWebsocket() {
                     handleMarketUpdate({
                         asset_id: pc.asset_id,
                         bestAsk: parseFloat(pc.best_ask),
-                        bestAskSize: 9999,
+                        bestAskSize: 9999, // Simulating deep enough size for price changes
                         bestBid: parseFloat(pc.best_bid),
                         bestBidSize: 9999
                     });
@@ -447,12 +348,8 @@ function connectWebsocket() {
     });
 
     wsMarket.on('close', () => {
-        console.log(`${colors.yellow}[WS] Market websocket closed. Reconnecting shortly...${colors.reset}`);
+        console.log(`${colors.yellow}[WS] Closed. Reconnecting...${colors.reset}`);
         setTimeout(connectWebsocket, 2000);
-    });
-
-    wsMarket.on('error', (err) => {
-        console.log(`${colors.red}[WS ERROR] ${err.message}${colors.reset}`);
     });
 }
 
@@ -460,7 +357,7 @@ async function loadNextMarket() {
     if (isSearchingNextMarket) return;
     isSearchingNextMarket = true;
 
-    console.log(`\n${colors.yellow}[SCANNER] Calculating the CURRENT active 5-Min BTC Market...${colors.reset}`);
+    console.log(`\n${colors.yellow}[SCANNER] Finding next active 5-Min BTC Market...${colors.reset}`);
 
     try {
         const nowSec = Math.floor(Date.now() / 1000);
@@ -473,14 +370,13 @@ async function loadNextMarket() {
         const events = await response.json();
 
         if (!events || events.length === 0 || !events[0].markets || events[0].markets.length === 0) {
-            console.log(`${colors.gray}[SCANNER] Market ${eventSlug} not fully indexed yet. Retrying...${colors.reset}`);
+            console.log(`${colors.gray}[SCANNER] Market ${eventSlug} not ready yet. Retrying...${colors.reset}`);
             searchCooldownTimer = Date.now() + 5000;
             return;
         }
 
         const validEvent = events[0];
         const validMarket = validEvent.markets[0];
-
         const parsedTokens = typeof validMarket.clobTokenIds === 'string'
             ? JSON.parse(validMarket.clobTokenIds)
             : validMarket.clobTokenIds;
@@ -488,21 +384,18 @@ async function loadNextMarket() {
         const yesTokenId = parsedTokens[0];
         const noTokenId = parsedTokens[1];
 
-        if (yesTokenId && noTokenId) {
+        if (yesTokenId && noTokenId && (yesTokenId !== currentYesToken)) {
             currentYesToken = yesTokenId;
             currentNoToken = noTokenId;
             marketEndTime = currentIntervalEndSec * 1000;
 
-            lastMidpoint = { YES: 0, NO: 0 };
-            trend = { YES: 0, NO: 0 };
             currentPrices = { YES: 0, NO: 0 };
-            currentBooks = {
-                YES: { ask: 0, askSize: 0, bid: 0, bidSize: 0 },
-                NO:  { ask: 0, askSize: 0, bid: 0, bidSize: 0 }
-            };
-            resetArbCycle();
+            currentBooks = { YES: { ask: 0, askSize: 0, bid: 0, bidSize: 0 }, NO: { ask: 0, askSize: 0, bid: 0, bidSize: 0 } };
+            
+            // RESET ARB ENGINE FOR NEW MARKET
+            arb = createEmptyArbState();
 
-            console.log(`${colors.brightYellow}[MARKET LOADED] Subscribing to: ${validEvent.title}${colors.reset}`);
+            console.log(`${colors.brightYellow}[MARKET LOADED] Subscribed to: ${validEvent.title}${colors.reset}`);
             connectWebsocket();
         } else {
             searchCooldownTimer = Date.now() + 5000;
@@ -515,25 +408,18 @@ async function loadNextMarket() {
     }
 }
 
-// --- MOBILE WEB DASHBOARD ---
+// --- LOCAL WEBSERVER / DASHBOARD ---
 http.createServer((req, res) => {
     if (req.url === '/api/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            stats,
-            trade,
-            currentPrices,
-            currentBooks,
-            arb,
-            recentTrades
-        }));
+        res.end(JSON.stringify({ stats, arb, currentPrices, currentBooks, recentTrades }));
         return;
     }
 
     fs.readFile(path.join(__dirname, 'dashboard.html'), 'utf8', (err, data) => {
         if (err) {
             res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Error loading dashboard UI. Make sure dashboard.html exists.');
+            res.end('Dashboard UI missing.');
             return;
         }
         res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -544,18 +430,18 @@ http.createServer((req, res) => {
 });
 
 async function runLiveTrader() {
-    console.log(`${colors.magenta}Booting YES/NO 48c Paper Limit Arb Engine...${colors.reset}`);
+    console.log(`${colors.magenta}Booting 48-Centre Fast-Hedge Protocol...${colors.reset}`);
 
     const account = privateKeyToAccount(rawKey);
     const walletClient = createWalletClient({ account, chain: polygon, transport: viemHttp() });
     clobClient = new ClobClient(HOST, CHAIN_ID, walletClient);
 
-    // Kept from your original auth bootstrap so the rest of the project shape stays familiar.
     try { await clobClient.deriveApiKey(); }
     catch (e) { await clobClient.createApiKey(); }
 
     await loadNextMarket();
 
+    // Loop for managing global market transition timer & fallback logs
     setInterval(async () => {
         if (marketEndTime === 0) {
             if (Date.now() > searchCooldownTimer) loadNextMarket();
@@ -563,7 +449,8 @@ async function runLiveTrader() {
         }
 
         const now = Date.now();
-        handleArbTimer(now);
+        // Trigger hedge check as fail-safe interval
+        handleHedgeTimer(now); 
 
         if (now >= marketEndTime && !isSearchingNextMarket) {
             await loadNextMarket();
@@ -574,11 +461,8 @@ async function runLiveTrader() {
         }
 
         if (Math.floor(now / 1000) % 10 === 0) {
-            const statusColor = trade.active ? colors.cyan : colors.gray;
-            const status = trade.active
-                ? `${trade.side} @ $${trade.entryPrice.toFixed(2)}`
-                : 'WAITING TO PLACE YES/NO 48c LIMIT PAIR';
-            console.log(`${statusColor}[LIVE] Status: ${status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
+            const statusColor = (arb.status === STATES.WAITING_FOR_MARKET || arb.status.includes('COMPLETED')) ? colors.gray : colors.cyan;
+            console.log(`${statusColor}[LIVE] State: ${arb.status} | Balance: $${stats.currentBalance.toFixed(2)} | YES Ask: $${currentPrices.YES.toFixed(3)} | NO Ask: $${currentPrices.NO.toFixed(3)}${colors.reset}`);
         }
     }, 1000);
 }
