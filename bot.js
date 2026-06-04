@@ -7,19 +7,18 @@ const path = require('path');
 
 /*
   48-Centre Fast-Hedge Strategy
-  Single-file paper implementation following the attached documentation.
+  PAPER validator using live Polymarket quote data.
 
-  Behaviour:
-  - Detect current eligible 5-minute BTC binary market.
+  This file follows the documented strategy:
+  - Detect eligible 5-minute BTC binary market.
   - Identify YES and NO token IDs.
-  - Immediately arm/rest paper YES and NO buy limits at ENTRY_PRICE = 0.48.
-  - Do not wait for prices to be near 0.48.
-  - If one side fills, start hedge timer.
-  - If the other side fills at 0.48 before timer expires, record PAIR_COMPLETED_AT_48.
+  - Immediately arm/rest paper YES and NO buy limits at ENTRY_PRICE.
+  - Do NOT wait for both prices to be near 0.48.
+  - A single fill is NOT arbitrage; it starts the hedge timer.
+  - If the opposite 0.48 order fills before timer expiry, pair completes at 48/48.
   - If timer expires, buy opposite side at current ask if <= MAX_HEDGE_PRICE.
-  - Record full audit data for validation.
-  - One attempt per market by default.
-  - Paper only. No live exchange orders.
+  - Record market, tokens, orders, fills, hedge, PnL, fees, quote history and risk triggers.
+  - PAPER ONLY. This does not place live exchange orders.
 */
 
 // =====================================================
@@ -155,31 +154,13 @@ let currentPrices = {
   NO: 0
 };
 
-let currentBooks = {
-  YES: {
-    ask: 0,
-    askSize: 0,
-    bid: 0,
-    bidSize: 0,
-    ts: 0,
-    source: null
-  },
-  NO: {
-    ask: 0,
-    askSize: 0,
-    bid: 0,
-    bidSize: 0,
-    ts: 0,
-    source: null
-  }
-};
+let currentBooks = createEmptyBooks();
 
 let recentTrades = [];
 let completedMarketIds = new Set();
 
 let isSearchingNextMarket = false;
 let searchCooldownUntil = 0;
-
 let lastStatusPrintSecond = 0;
 
 // =====================================================
@@ -237,11 +218,9 @@ function ensureCsvHeaders() {
         'Market_End',
         'YES_Token',
         'NO_Token',
-
         'YES_Order_ID',
         'NO_Order_ID',
         'Hedge_Order_ID',
-
         'Status',
         'First_Fill_Side',
         'First_Fill_Price',
@@ -249,20 +228,17 @@ function ensureCsvHeaders() {
         'First_Fill_Size',
         'First_Fill_Observed_Ask',
         'First_Fill_Observed_Ask_Size',
-
         'Second_Fill_Side',
         'Second_Fill_Price',
         'Second_Fill_Time',
         'Second_Fill_Size',
         'Second_Fill_Observed_Ask',
         'Second_Fill_Observed_Ask_Size',
-
         'Hedge_Side',
         'Hedge_Price',
         'Hedge_Time',
         'Hedge_Observed_Ask',
         'Hedge_Observed_Ask_Size',
-
         'Seconds_To_Complete',
         'Shares',
         'Gross_PnL_USD',
@@ -291,11 +267,15 @@ function ensureCsvHeaders() {
         'YES_Ask_Size',
         'YES_Bid',
         'YES_Bid_Size',
+        'YES_Source',
+        'YES_Can_Fill_From_Book',
         'YES_Quote_Age_Ms',
         'NO_Ask',
         'NO_Ask_Size',
         'NO_Bid',
         'NO_Bid_Size',
+        'NO_Source',
+        'NO_Can_Fill_From_Book',
         'NO_Quote_Age_Ms',
         'Arb_State'
       ].join(',') + '\n'
@@ -314,39 +294,54 @@ function audit(type, payload = {}) {
 }
 
 // =====================================================
-// STATE FACTORY
+// STATE FACTORIES
 // =====================================================
+
+function createEmptyBooks() {
+  return {
+    YES: {
+      ask: 0,
+      askSize: 0,
+      bid: 0,
+      bidSize: 0,
+      ts: 0,
+      source: null,
+      canFillFromBook: false
+    },
+    NO: {
+      ask: 0,
+      askSize: 0,
+      bid: 0,
+      bidSize: 0,
+      ts: 0,
+      source: null,
+      canFillFromBook: false
+    }
+  };
+}
 
 function createEmptyArbState() {
   return {
     status: STATES.WAITING_FOR_MARKET,
-
     attempted: false,
-
     startedAt: 0,
     completedAt: 0,
-
     firstFillTime: 0,
     firstFillSide: null,
-
     riskReason: null,
-
     orders: {
       YES: null,
       NO: null,
       HEDGE: null
     },
-
     positions: {
       YES: null,
       NO: null
     },
-
     fills: {
       YES: null,
       NO: null
     },
-
     quoteAtArm: null
   };
 }
@@ -477,6 +472,16 @@ function validateHedge(side) {
     };
   }
 
+  if (!book.canFillFromBook || book.source !== 'book') {
+    return {
+      ok: false,
+      reason: 'NO_FULL_BOOK_SNAPSHOT_FOR_HEDGE',
+      source: book.source,
+      ask: book.ask,
+      askSize: book.askSize
+    };
+  }
+
   if (book.ask > MAX_HEDGE_PRICE) {
     return {
       ok: false,
@@ -560,6 +565,16 @@ function paperLimitBuyFillCheck(order) {
     };
   }
 
+  if (!book.canFillFromBook || book.source !== 'book') {
+    return {
+      fill: false,
+      reason: 'NO_FULL_BOOK_SNAPSHOT_FOR_FILL',
+      source: book.source,
+      ask: book.ask,
+      askSize: book.askSize
+    };
+  }
+
   if (book.ask <= 0) {
     return {
       fill: false,
@@ -589,7 +604,7 @@ function paperLimitBuyFillCheck(order) {
 
   return {
     fill: true,
-    reason: 'ASK_CROSSED_LIMIT_WITH_DISPLAYED_SIZE',
+    reason: 'FULL_BOOK_ASK_CROSSED_LIMIT_WITH_DISPLAYED_SIZE',
     ask: book.ask,
     askSize: book.askSize,
     bid: book.bid,
@@ -691,7 +706,6 @@ function checkPaperLimitFills() {
       shares: order.shares,
       time: Date.now(),
       isTaker: false,
-
       observedAskAtFill: fillCheck.ask,
       observedAskSizeAtFill: fillCheck.askSize,
       observedBidAtFill: fillCheck.bid,
@@ -715,7 +729,7 @@ function checkPaperLimitFills() {
       fill,
       quoteAtFill: { ...currentBooks[side] },
       warning:
-        'Paper fill uses displayed ask crossing the limit. Queue position is not guaranteed.'
+        'Paper fill uses full book displayed ask crossing the limit. Queue position is not guaranteed.'
     });
 
     console.log(
@@ -813,12 +827,11 @@ function handleHedgeTimer() {
     shares: SIZE_PER_SIDE,
     time: Date.now(),
     isTaker: true,
-
     observedAskAtFill: rawAsk,
     observedAskSizeAtFill: currentBooks[hedgeSide].askSize,
     observedBidAtFill: currentBooks[hedgeSide].bid,
     observedBidSizeAtFill: currentBooks[hedgeSide].bidSize,
-    fillReason: 'HEDGE_TIMER_EXPIRED_MARKETABLE_BUY',
+    fillReason: 'HEDGE_TIMER_EXPIRED_MARKETABLE_BUY_FROM_FULL_BOOK',
     queueModel: 'marketable_buy_assumes_displayed_ask_available'
   };
 
@@ -986,6 +999,8 @@ function completePair(status) {
     secondsToComplete,
     arb
   });
+
+  closeMarketWebsocket('PAIR_COMPLETED_STOP_TRADING_THIS_MARKET');
 }
 
 function abortAttempt(reason, detail = {}) {
@@ -1021,20 +1036,18 @@ function abortAttempt(reason, detail = {}) {
     `${colors.red}[${STATES.ABORTED_OR_CANCELLED}] ${reason}${colors.reset}`
   );
 
+  const yesCost = arb.positions.YES
+    ? arb.positions.YES.entryPrice * arb.positions.YES.shares
+    : 0;
+
+  const noCost = arb.positions.NO
+    ? arb.positions.NO.entryPrice * arb.positions.NO.shares
+    : 0;
+
   const pnl = {
-    yesCost: arb.positions.YES
-      ? arb.positions.YES.entryPrice * arb.positions.YES.shares
-      : 0,
-    noCost: arb.positions.NO
-      ? arb.positions.NO.entryPrice * arb.positions.NO.shares
-      : 0,
-    deployedCost:
-      (arb.positions.YES
-        ? arb.positions.YES.entryPrice * arb.positions.YES.shares
-        : 0) +
-      (arb.positions.NO
-        ? arb.positions.NO.entryPrice * arb.positions.NO.shares
-        : 0),
+    yesCost,
+    noCost,
+    deployedCost: yesCost + noCost,
     payout: 0,
     fees: 0,
     grossPnl: 0,
@@ -1060,6 +1073,8 @@ function abortAttempt(reason, detail = {}) {
     detail,
     arb
   });
+
+  closeMarketWebsocket('ATTEMPT_ABORTED_STOP_TRADING_THIS_MARKET');
 }
 
 function writeTradeCsv({
@@ -1216,23 +1231,26 @@ function handleMarketUpdate(data) {
     return;
   }
 
-  const previous = currentBooks[side] || {};
-
   const ask = Number(data.bestAsk);
   const bid = Number(data.bestBid);
 
-  const askSize =
-    data.bestAskSize === undefined || data.bestAskSize === null
-      ? previous.askSize || 0
-      : Number(data.bestAskSize || 0);
-
-  const bidSize =
-    data.bestBidSize === undefined || data.bestBidSize === null
-      ? previous.bidSize || 0
-      : Number(data.bestBidSize || 0);
-
   if (!Number.isFinite(ask) || !Number.isFinite(bid)) {
     return;
+  }
+
+  const isFullBook = data.source === 'book';
+
+  let askSize = 0;
+  let bidSize = 0;
+
+  if (isFullBook) {
+    askSize = Number(data.bestAskSize || 0);
+    bidSize = Number(data.bestBidSize || 0);
+  } else {
+    // Important: do not reuse old sizes for price_change.
+    // price_change can update displayed price, but cannot prove fillable size.
+    askSize = 0;
+    bidSize = 0;
   }
 
   currentPrices[side] = ask;
@@ -1243,7 +1261,8 @@ function handleMarketUpdate(data) {
     bid,
     bidSize: Number.isFinite(bidSize) ? bidSize : 0,
     ts: Date.now(),
-    source: data.source || 'unknown'
+    source: data.source || 'unknown',
+    canFillFromBook: isFullBook
   };
 
   audit('QUOTE_UPDATE', {
@@ -1257,11 +1276,71 @@ function handleMarketUpdate(data) {
   handleHedgeTimer();
 }
 
+// =====================================================
+// WEBSOCKET
+// =====================================================
+
+function shouldKeepMarketWebsocketAlive() {
+  if (!currentMarket) {
+    return false;
+  }
+
+  if (!currentYesToken || !currentNoToken) {
+    return false;
+  }
+
+  if (Date.now() >= marketEndTime) {
+    return false;
+  }
+
+  if (isTerminalState(arb.status)) {
+    return false;
+  }
+
+  return true;
+}
+
+function closeMarketWebsocket(reason) {
+  if (!global.wsMarket) {
+    return;
+  }
+
+  try {
+    audit('WS_CLOSED_BY_BOT', {
+      reason,
+      market: currentMarket,
+      state: arb.status
+    });
+
+    global.wsMarket.removeAllListeners('close');
+    global.wsMarket.removeAllListeners('error');
+    global.wsMarket.removeAllListeners('message');
+    global.wsMarket.removeAllListeners('open');
+
+    global.wsMarket.terminate();
+  } catch {}
+
+  global.wsMarket = null;
+}
+
 function connectWebsocket() {
   if (global.wsMarket) {
     try {
       global.wsMarket.terminate();
     } catch {}
+  }
+
+  if (!currentYesToken || !currentNoToken || !currentMarket) {
+    return;
+  }
+
+  if (isTerminalState(arb.status)) {
+    audit('WS_CONNECT_SKIPPED_TERMINAL_STATE', {
+      market: currentMarket,
+      state: arb.status
+    });
+
+    return;
   }
 
   const wsMarket = new WebSocket(
@@ -1275,14 +1354,12 @@ function connectWebsocket() {
       `${colors.yellow}[WS] Connected to Polymarket market stream.${colors.reset}`
     );
 
-    if (currentYesToken && currentNoToken) {
-      wsMarket.send(
-        JSON.stringify({
-          type: 'market',
-          assets_ids: [currentYesToken, currentNoToken]
-        })
-      );
-    }
+    wsMarket.send(
+      JSON.stringify({
+        type: 'market',
+        assets_ids: [currentYesToken, currentNoToken]
+      })
+    );
   });
 
   wsMarket.on('message', msg => {
@@ -1345,17 +1422,32 @@ function connectWebsocket() {
     console.log(`${colors.red}[WS ERROR] ${err.message}${colors.reset}`);
 
     audit('WS_ERROR', {
-      message: err.message
+      message: err.message,
+      market: currentMarket,
+      state: arb.status
     });
   });
 
   wsMarket.on('close', () => {
+    global.wsMarket = null;
+
+    if (!shouldKeepMarketWebsocketAlive()) {
+      audit('WS_CLOSE_NO_RECONNECT', {
+        market: currentMarket,
+        state: arb.status,
+        marketEndTime,
+        now: Date.now()
+      });
+
+      return;
+    }
+
     console.log(
       `${colors.gray}[WS] Connection dropped. Reconnecting...${colors.reset}`
     );
 
     setTimeout(() => {
-      if (currentYesToken && currentNoToken && Date.now() < marketEndTime) {
+      if (shouldKeepMarketWebsocketAlive()) {
         connectWebsocket();
       }
     }, 2000);
@@ -1379,11 +1471,8 @@ async function loadNextMarket() {
 
   try {
     const nowSec = Math.floor(Date.now() / 1000);
-
     const remainder = nowSec % MARKET_INTERVAL_SECONDS;
-
     const currentIntervalStartSec = nowSec - remainder;
-
     const currentIntervalEndSec =
       currentIntervalStartSec + MARKET_INTERVAL_SECONDS;
 
@@ -1449,25 +1538,7 @@ async function loadNextMarket() {
       NO: 0
     };
 
-    currentBooks = {
-      YES: {
-        ask: 0,
-        askSize: 0,
-        bid: 0,
-        bidSize: 0,
-        ts: 0,
-        source: null
-      },
-      NO: {
-        ask: 0,
-        askSize: 0,
-        bid: 0,
-        bidSize: 0,
-        ts: 0,
-        source: null
-      }
-    };
-
+    currentBooks = createEmptyBooks();
     arb = createEmptyArbState();
 
     console.log(
@@ -1526,12 +1597,16 @@ function writePriceHistory() {
       currentBooks.YES.askSize,
       currentBooks.YES.bid.toFixed(4),
       currentBooks.YES.bidSize,
+      currentBooks.YES.source || '',
+      currentBooks.YES.canFillFromBook,
       yesAge,
 
       currentBooks.NO.ask.toFixed(4),
       currentBooks.NO.askSize,
       currentBooks.NO.bid.toFixed(4),
       currentBooks.NO.bidSize,
+      currentBooks.NO.source || '',
+      currentBooks.NO.canFillFromBook,
       noAge,
 
       arb.status
@@ -1651,4 +1726,3 @@ runPaperTrader().catch(err => {
   console.error(err);
   process.exit(1);
 });
-``
