@@ -1,0 +1,10 @@
+[2026-06-05T22:39:58.530Z] Booting 48-Centre Fast-Hedge PAPER validator...
+[2026-06-05T22:39:58.531Z] Entry: 0.48 | Hedge delay: 2s | Max hedge: 0.6 | Size: 1
+[2026-06-05T22:39:58.531Z] 
+[SCANNER] Checking for active 5-minute BTC market...
+[2026-06-05T22:39:58.560Z] [DASHBOARD] Web UI running on port 3000
+[2026-06-05T22:39:58.563Z] [SCANNER ERROR] fetch failed
+[2026-06-05T22:40:00.566Z] [LIVE PAPER] State: WAITING_FOR_MARKET | Balance: $100.00 | YES Ask: $0.000 | NO Ask: $0.000
+[2026-06-05T22:40:03.569Z] 
+[SCANNER] Checking for active 5-minute BTC market...
+[2026-06-05T22:40:03.572Z] [SCANNER ERROR] fetch failed
