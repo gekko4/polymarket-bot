@@ -1,11 +1,13 @@
 {
   "name": "polymarket-bot",
   "version": "2.0.0",
-  "description": "48-Centre Fast-Hedge paper validation bot",
-  "main": "bot.js",
+  "description": "48-Centre Fast-Hedge live trading bot",
+  "main": "src/cli.js",
   "scripts": {
-    "start": "node bot.js",
-    "paper": "MODE=paper node bot.js"
+    "start": "MODE=live node src/cli.js",
+    "live": "MODE=live node src/cli.js",
+    "paper": "MODE=paper node src/cli.js",
+    "test": "node --test tests/**/*.test.js"
   },
   "keywords": [],
   "author": "",
