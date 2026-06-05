@@ -21,7 +21,7 @@ class PaperAdapter {
     return this.client.getOrderBook(tokenId);
   }
 
-  async placeLimitBuy({ tokenId, price, size }) {
+  async placeLimitBuy({ tokenId, price, size, options: _options }) {
     const id = `paper-${this.seq++}`;
     const order = {
       id,
@@ -37,7 +37,7 @@ class PaperAdapter {
     return order;
   }
 
-  async placeAggressiveBuy({ tokenId, maxPrice, size, fillPrice }) {
+  async placeAggressiveBuy({ tokenId, maxPrice, size, fillPrice, options: _options }) {
     const id = `paper-${this.seq++}`;
     const price = fillPrice || maxPrice;
     const order = {
@@ -59,9 +59,17 @@ class PaperAdapter {
     return this.orders.get(orderId) || null;
   }
 
-  simulateFill(orderId, fillPrice) {
+  simulateFill(orderId, fillPrice, availableSize = Infinity) {
     const order = this.orders.get(orderId);
     if (!order || order.status === 'FILLED' || order.status === 'CANCELLED') {
+      return order;
+    }
+
+    if (fillPrice > order.price) {
+      return order;
+    }
+
+    if (availableSize < order.size) {
       return order;
     }
 

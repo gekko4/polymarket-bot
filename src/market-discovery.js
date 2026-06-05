@@ -34,10 +34,10 @@ class MarketDiscovery {
       return null;
     }
 
-    const conditionId = market.conditionId || market.id;
+    const conditionId = market.conditionId || market.id || eventSlug;
 
     return {
-      id: conditionId || eventSlug,
+      id: conditionId,
       slug: eventSlug,
       title: events[0].title || eventSlug,
       startTime: new Date(intervalStart * 1000).toISOString(),
@@ -46,8 +46,8 @@ class MarketDiscovery {
       endMs: intervalEnd * 1000,
       yesToken: tokenIds[0],
       noToken: tokenIds[1],
-      conditionId: conditionId || null,
-      whitelistKey: conditionId || eventSlug
+      conditionId,
+      whitelistKey: conditionId
     };
   }
 

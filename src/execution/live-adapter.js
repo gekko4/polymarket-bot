@@ -129,6 +129,7 @@ class LiveAdapter {
       filledSize: matchedSize,
       avgPrice: Number(order.price),
       status: normalizeStatus(order.status),
+      filledAt: normalizeTimestamp(order.last_update || order.created_at),
       raw: order
     };
   }
@@ -168,6 +169,20 @@ function normalizeStatus(raw) {
 
 function ensureHex(value) {
   return value.startsWith('0x') ? value : `0x${value}`;
+}
+
+function normalizeTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isNaN(numeric)) {
+    return numeric > 1e12 ? numeric : numeric * 1000;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 module.exports = {

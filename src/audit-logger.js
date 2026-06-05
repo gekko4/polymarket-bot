@@ -95,11 +95,24 @@ class AuditLogger {
       summary.deployedCost,
       summary.riskReason
     ]
-      .map(v => (v === undefined || v === null ? '' : String(v)))
+      .map(v => csvEscape(v))
       .join(',');
 
     this.tradeStream.write(`${row}\n`);
   }
+}
+
+function csvEscape(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  const text = String(value);
+  if (!/[",\n]/.test(text)) {
+    return text;
+  }
+
+  return `"${text.replace(/"/g, '""')}"`;
 }
 
 module.exports = {

@@ -210,7 +210,7 @@ class StrategyRunner {
       if (this.adapter.mode === 'paper') {
         const quote = this.quoteCache.get(side);
         if (quote?.bestAsk && quote.bestAsk.price <= attemptOrder.price) {
-          this.adapter.simulateFill(attemptOrder.id, quote.bestAsk.price);
+          this.adapter.simulateFill(attemptOrder.id, quote.bestAsk.price, quote.bestAsk.size);
         }
       }
 
@@ -254,7 +254,9 @@ class StrategyRunner {
     existing.orderId = order.id;
     existing.filledSize = Math.max(existing.filledSize, order.filledSize);
     existing.avgPrice = order.avgPrice || order.price;
-    existing.fillTime = existing.fillTime || new Date().toISOString();
+    existing.fillTime =
+      existing.fillTime ||
+      (order.filledAt ? new Date(order.filledAt).toISOString() : new Date().toISOString());
 
     attempt.fills[side] = existing;
   }
@@ -332,10 +334,6 @@ class StrategyRunner {
       }
 
       const remaining = Math.max(0, this.config.sizePerSide - oppositeFilled);
-      if (remaining === 0) {
-        await this.completeAttempt(attempt, STATES.PAIR_COMPLETED_AT_48);
-        return;
-      }
 
       const order = await this.adapter.placeAggressiveBuy({
         tokenId: opposite === 'YES' ? attempt.market.yesToken : attempt.market.noToken,
