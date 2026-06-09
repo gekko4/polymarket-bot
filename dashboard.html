@@ -2,582 +2,533 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>PolyBot Paper Monitor</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>PolyBot</title>
   <style>
     :root {
-      --bg: #0b0f14;
-      --panel: #111820;
-      --panel-2: #0f151c;
-      --line: #22303d;
-      --text: #e6edf3;
-      --muted: #8b98a5;
-      --soft: #131c25;
+      --bg: #050607;
+      --card: rgba(17, 20, 26, .72);
+      --card2: rgba(9, 12, 16, .62);
+      --line: rgba(255,255,255,.08);
+      --line2: rgba(255,255,255,.13);
+      --text: #f8fafc;
+      --muted: #8b95a3;
+      --gold1: #f59e0b;
+      --gold2: #facc15;
+      --gold3: #fff2a8;
+      --cyan: #22d3ee;
       --green: #22c55e;
-      --red: #ef4444;
-      --amber: #f59e0b;
+      --red: #fb7185;
       --blue: #38bdf8;
-      --purple: #a78bfa;
-      --shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
-      --radius: 18px;
+      --violet: #a78bfa;
+      --radius: 24px;
     }
 
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     body {
       margin: 0;
       min-height: 100vh;
-      background:
-        radial-gradient(circle at 15% 0%, rgba(56, 189, 248, 0.08), transparent 28%),
-        radial-gradient(circle at 90% 10%, rgba(167, 139, 250, 0.07), transparent 24%),
-        var(--bg);
       color: var(--text);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding: 20px;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 50% -10%, rgba(250,204,21,.17), transparent 34%),
+        radial-gradient(circle at 0% 20%, rgba(34,211,238,.10), transparent 36%),
+        radial-gradient(circle at 100% 38%, rgba(167,139,250,.10), transparent 32%),
+        linear-gradient(180deg, #050607 0%, #080b10 55%, #050607 100%);
+      padding: 18px 14px 28px;
     }
 
-    .shell {
-      width: 100%;
-      max-width: 1120px;
-      margin: 0 auto;
-    }
+    .app { width: 100%; max-width: 460px; margin: 0 auto; }
 
-    header {
+    .top {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
+      margin-bottom: 14px;
+      padding: 0 2px;
     }
 
-    .title h1 {
-      margin: 0;
-      font-size: clamp(1.35rem, 2.4vw, 2rem);
-      letter-spacing: -0.03em;
-      font-weight: 750;
+    .brand {
+      font-size: 1.18rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      background: linear-gradient(90deg, var(--gold1), var(--gold2), var(--gold3));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
-    .title p {
-      margin: 6px 0 0 0;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }
-
-    .status-pill {
+    .pill {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 9px 12px;
-      border: 1px solid var(--line);
+      gap: 7px;
+      padding: 7px 10px;
       border-radius: 999px;
-      background: rgba(17, 24, 32, 0.88);
+      background: rgba(255,255,255,.055);
+      border: 1px solid var(--line);
       color: var(--muted);
-      font-size: 0.86rem;
-      white-space: nowrap;
+      font-size: .73rem;
+      font-weight: 700;
+      letter-spacing: .02em;
     }
 
     .dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--gold2);
+      box-shadow: 0 0 16px rgba(250,204,21,.65);
+    }
+    .dot.on { background: var(--green); box-shadow: 0 0 16px rgba(34,197,94,.65); }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: 32px;
+      border: 1px solid rgba(250,204,21,.18);
+      background:
+        linear-gradient(160deg, rgba(250,204,21,.12), rgba(34,211,238,.06) 44%, rgba(17,20,26,.78)),
+        rgba(17,20,26,.72);
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      padding: 22px 20px 18px;
+      margin-bottom: 12px;
+      backdrop-filter: blur(18px);
+    }
+
+    .hero::after {
+      content: '';
+      position: absolute;
+      inset: -80px -80px auto auto;
+      width: 170px;
+      height: 170px;
       border-radius: 999px;
-      background: var(--amber);
-      box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.12);
+      background: rgba(250,204,21,.12);
+      filter: blur(4px);
     }
 
-    .dot.active {
-      background: var(--green);
-      box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12);
+    .hero-label {
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .13em;
+      text-transform: uppercase;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 14px;
+    .balance {
+      margin-top: 6px;
+      font-size: 3.05rem;
+      line-height: 1;
+      font-weight: 950;
+      letter-spacing: -.06em;
+      font-variant-numeric: tabular-nums;
     }
+
+    .hero-row {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,.22);
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 750;
+    }
+    .chip strong { color: var(--text); }
+    .chip.good { color: var(--green); border-color: rgba(34,197,94,.22); }
+    .chip.bad { color: var(--red); border-color: rgba(251,113,133,.22); }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
     .card {
-      background: linear-gradient(180deg, rgba(17, 24, 32, 0.96), rgba(15, 21, 28, 0.96));
-      border: 1px solid var(--line);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 16px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      box-shadow: 0 12px 35px rgba(0,0,0,.25);
+      padding: 14px;
+      backdrop-filter: blur(18px);
     }
 
-    .span-3 { grid-column: span 3; }
-    .span-4 { grid-column: span 4; }
-    .span-5 { grid-column: span 5; }
-    .span-6 { grid-column: span 6; }
-    .span-7 { grid-column: span 7; }
-    .span-8 { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
+    .wide { grid-column: 1 / -1; }
 
     .label {
       color: var(--muted);
-      font-size: 0.76rem;
+      font-size: .68rem;
+      font-weight: 850;
+      letter-spacing: .10em;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-      font-weight: 700;
+      margin-bottom: 7px;
     }
 
-    .value {
-      font-variant-numeric: tabular-nums;
+    .big {
       font-size: 1.72rem;
-      font-weight: 760;
-      letter-spacing: -0.03em;
+      font-weight: 920;
+      letter-spacing: -.045em;
+      font-variant-numeric: tabular-nums;
     }
 
     .sub {
-      margin-top: 6px;
+      margin-top: 4px;
       color: var(--muted);
-      font-size: 0.86rem;
-      line-height: 1.35;
-    }
-
-    .positive { color: var(--green); }
-    .negative { color: var(--red); }
-    .neutral { color: var(--text); }
-    .blue { color: var(--blue); }
-    .amber { color: var(--amber); }
-    .purple { color: var(--purple); }
-
-    .market-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .market-name {
-      font-size: 1rem;
-      font-weight: 720;
+      font-size: .78rem;
       line-height: 1.25;
     }
 
-    .tiny {
-      font-size: 0.78rem;
-      color: var(--muted);
-      margin-top: 5px;
-      word-break: break-word;
+    .market-title {
+      font-size: .96rem;
+      font-weight: 850;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    .timer {
-      text-align: right;
-      min-width: 120px;
+    .slug {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .72rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .bar {
-      height: 9px;
-      border-radius: 999px;
-      background: #0a1118;
+      height: 8px;
+      background: rgba(0,0,0,.32);
       border: 1px solid var(--line);
+      border-radius: 999px;
       overflow: hidden;
       margin-top: 12px;
     }
-
-    .bar-fill {
+    .fill {
       height: 100%;
       width: 0%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, var(--blue), var(--purple));
-      transition: width 0.25s ease;
+      background: linear-gradient(90deg, var(--gold1), var(--cyan), var(--violet));
+      border-radius: 999px;
+      transition: width .25s ease;
     }
 
-    .price-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 12px;
-    }
+    .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-    .price-box {
-      background: rgba(11, 15, 20, 0.52);
+    .side {
+      padding: 14px;
+      border-radius: 22px;
+      background: var(--card2);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 13px;
+      min-height: 94px;
     }
 
-    .price-head {
+    .side-top {
       display: flex;
       justify-content: space-between;
+      align-items: center;
       color: var(--muted);
-      font-size: 0.8rem;
-      margin-bottom: 6px;
+      font-size: .72rem;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
     }
 
-    .price-main {
+    .touch {
+      font-size: .66rem;
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.06);
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+    .touch.hit { color: var(--green); border-color: rgba(34,197,94,.28); background: rgba(34,197,94,.09); }
+
+    .price {
+      margin-top: 9px;
+      font-size: 2rem;
+      line-height: 1;
+      font-weight: 950;
+      letter-spacing: -.06em;
       font-variant-numeric: tabular-nums;
-      font-size: 1.55rem;
-      font-weight: 780;
     }
+    .yes { color: var(--cyan); }
+    .no { color: var(--gold2); }
 
-    .strategy-list {
-      display: grid;
-      gap: 9px;
-    }
-
-    .rule {
+    .position {
       display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .pos-side {
+      font-size: 1.75rem;
+      line-height: 1;
+      font-weight: 950;
+      letter-spacing: -.05em;
+    }
+
+    .mini-table { display: grid; gap: 8px; margin-top: 10px; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255,255,255,.065);
+      font-size: .82rem;
+    }
+    .row span:first-child { color: var(--muted); }
+    .row span:last-child { font-weight: 800; text-align: right; }
+
+    .history { display: grid; gap: 8px; margin-top: 10px; }
+    .trade {
+      display: flex;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
       padding: 10px 0;
-      border-bottom: 1px solid rgba(34, 48, 61, 0.65);
+      border-top: 1px solid rgba(255,255,255,.065);
     }
+    .trade:first-child { border-top: none; padding-top: 0; }
+    .trade-title { font-size: .80rem; font-weight: 850; line-height: 1.25; }
+    .trade-meta { margin-top: 3px; font-size: .72rem; color: var(--muted); }
+    .pnl { font-size: .95rem; font-weight: 920; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-    .rule:last-child { border-bottom: none; }
-    .rule span:first-child { color: var(--muted); }
-    .rule span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
-
-    .position-card {
-      background: rgba(11, 15, 20, 0.52);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 14px;
-      min-height: 143px;
-    }
-
-    .position-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(34, 48, 61, 0.55);
-      font-size: 0.92rem;
-    }
-
-    .position-row:last-child { border-bottom: none; }
-    .position-row span:first-child { color: var(--muted); }
-    .position-row span:last-child { font-weight: 700; text-align: right; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
-
-    th, td {
-      padding: 11px 8px;
-      border-bottom: 1px solid rgba(34, 48, 61, 0.65);
-      text-align: left;
-      vertical-align: middle;
-    }
-
-    th {
-      color: var(--muted);
-      font-size: 0.74rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      font-weight: 760;
-    }
-
-    td { color: var(--text); }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .green { color: var(--green); }
+    .red { color: var(--red); }
+    .muted { color: var(--muted); }
 
     .empty {
-      color: var(--muted);
-      padding: 22px 4px;
       text-align: center;
-      border: 1px dashed var(--line);
-      border-radius: 14px;
-      background: rgba(11, 15, 20, 0.35);
-    }
-
-    .footer-note {
       color: var(--muted);
-      font-size: 0.8rem;
-      margin-top: 14px;
-      line-height: 1.4;
+      font-size: .82rem;
+      padding: 13px 0 4px;
     }
 
-    @media (max-width: 920px) {
-      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
-      header { flex-direction: column; }
-      .status-pill { width: fit-content; }
-    }
-
-    @media (max-width: 560px) {
-      body { padding: 14px; }
-      .card { padding: 14px; }
-      .price-grid { grid-template-columns: 1fr; }
-      .market-top { flex-direction: column; }
-      .timer { text-align: left; }
-      table { font-size: 0.82rem; }
-      th:nth-child(3), td:nth-child(3) { display: none; }
+    @media (min-width: 720px) {
+      .app { max-width: 520px; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header>
-      <div class="title">
-        <h1>PolyBot Paper Monitor</h1>
-        <p>BTC 5m first-touch strategy — clean paper-trading view.</p>
+  <main class="app">
+    <section class="top">
+      <div class="brand">PolyBot</div>
+      <div class="pill"><span id="pulse" class="dot"></span><span id="status">Syncing</span></div>
+    </section>
+
+    <section class="hero">
+      <div class="hero-label">Paper Balance</div>
+      <div id="balance" class="balance">$0.00</div>
+      <div class="hero-row">
+        <div id="roi" class="chip">ROI <strong>0.00%</strong></div>
+        <div id="winrate" class="chip">Win <strong>0.0%</strong></div>
+        <div id="trades" class="chip">Trades <strong>0</strong></div>
       </div>
-      <div class="status-pill">
-        <span id="pulse" class="dot"></span>
-        <span id="statusText">Connecting…</span>
+    </section>
+
+    <section class="grid">
+      <div class="card wide">
+        <div class="label">Market</div>
+        <div id="marketTitle" class="market-title">Loading BTC 5m market…</div>
+        <div id="marketSlug" class="slug">—</div>
+        <div class="row" style="border-top:0;padding-top:12px;">
+          <span>Elapsed</span><span id="elapsed">—</span>
+        </div>
+        <div class="row">
+          <span>Left</span><span id="left">—</span>
+        </div>
+        <div class="bar"><div id="progress" class="fill"></div></div>
       </div>
-    </header>
 
-    <main class="grid">
-      <section class="card span-3">
-        <div class="label">Balance</div>
-        <div id="balance" class="value">$0.00</div>
-        <div id="roi" class="sub">0.00% ROI</div>
-      </section>
+      <div class="card wide prices">
+        <div class="side">
+          <div class="side-top"><span>YES Ask</span><span id="yesTouch" class="touch">wait</span></div>
+          <div id="yes" class="price yes">—</div>
+          <div id="yesSub" class="sub">Entry ≤ 34¢</div>
+        </div>
+        <div class="side">
+          <div class="side-top"><span>NO Ask</span><span id="noTouch" class="touch">wait</span></div>
+          <div id="no" class="price no">—</div>
+          <div id="noSub" class="sub">First touch only</div>
+        </div>
+      </div>
 
-      <section class="card span-3">
-        <div class="label">Win rate</div>
-        <div id="winRate" class="value">0.0%</div>
-        <div id="winLoss" class="sub">0W / 0L</div>
-      </section>
-
-      <section class="card span-3">
-        <div class="label">Settled trades</div>
-        <div id="totalTrades" class="value">0</div>
-        <div id="avgPnl" class="sub">Avg PnL: $0.0000</div>
-      </section>
-
-      <section class="card span-3">
-        <div class="label">Current position</div>
-        <div id="positionSummary" class="value">None</div>
-        <div id="positionSub" class="sub">Awaiting signal</div>
-      </section>
-
-      <section class="card span-8">
-        <div class="market-top">
+      <div class="card wide">
+        <div class="position">
           <div>
-            <div class="label">Active market</div>
-            <div id="marketTitle" class="market-name">Loading market…</div>
-            <div id="marketSlug" class="tiny">—</div>
+            <div class="label">Position</div>
+            <div id="posSide" class="pos-side">None</div>
+            <div id="posSub" class="sub">Waiting for first touch</div>
           </div>
-          <div class="timer">
-            <div class="label">Time</div>
-            <div id="timeLeft" class="value">—</div>
-            <div id="elapsed" class="sub">Elapsed: —</div>
-          </div>
-        </div>
-        <div class="bar"><div id="progress" class="bar-fill"></div></div>
-
-        <div class="price-grid">
-          <div class="price-box">
-            <div class="price-head"><span>YES ask</span><span id="yesTouch">—</span></div>
-            <div id="yesAsk" class="price-main blue">—</div>
-            <div id="yesMeta" class="sub">Bid: —</div>
-          </div>
-          <div class="price-box">
-            <div class="price-head"><span>NO ask</span><span id="noTouch">—</span></div>
-            <div id="noAsk" class="price-main purple">—</div>
-            <div id="noMeta" class="sub">Bid: —</div>
+          <div style="text-align:right">
+            <div class="label">Entry</div>
+            <div id="posEntry" class="big">—</div>
           </div>
         </div>
-      </section>
-
-      <section class="card span-4">
-        <div class="label">Strategy rules</div>
-        <div class="strategy-list">
-          <div class="rule"><span>Entry ask</span><span id="ruleEntry">≤ 34¢</span></div>
-          <div class="rule"><span>Ignore before</span><span id="ruleIgnore">10s</span></div>
-          <div class="rule"><span>Max entry</span><span id="ruleMax">120s</span></div>
-          <div class="rule"><span>Preferred</span><span id="rulePreferred">30–60s</span></div>
-          <div class="rule"><span>Mode</span><span>Paper only</span></div>
+        <div class="mini-table">
+          <div class="row"><span>Quality</span><span id="quality">—</span></div>
+          <div class="row"><span>Entry time</span><span id="entryTime">—</span></div>
+          <div class="row"><span>Shares</span><span id="shares">—</span></div>
         </div>
-      </section>
+      </div>
 
-      <section class="card span-5">
-        <div class="label">Position details</div>
-        <div class="position-card">
-          <div class="position-row"><span>Side</span><span id="posSide">—</span></div>
-          <div class="position-row"><span>Entry</span><span id="posEntry">—</span></div>
-          <div class="position-row"><span>Shares</span><span id="posShares">—</span></div>
-          <div class="position-row"><span>Elapsed at entry</span><span id="posElapsed">—</span></div>
-          <div class="position-row"><span>Quality</span><span id="posQuality">—</span></div>
-        </div>
-      </section>
+      <div class="card">
+        <div class="label">Rules</div>
+        <div class="big" id="entryRule">34¢</div>
+        <div id="ruleSub" class="sub">10–120s · prefer 30–60s</div>
+      </div>
 
-      <section class="card span-7">
-        <div class="label">Recent settlements</div>
-        <div id="historyWrap">
-          <div class="empty">No settled paper trades yet.</div>
-        </div>
-      </section>
+      <div class="card">
+        <div class="label">Avg PnL</div>
+        <div id="avgPnl" class="big">$0.0000</div>
+        <div id="wl" class="sub">0W / 0L</div>
+      </div>
 
-      <section class="card span-12">
-        <div class="label">Notes</div>
-        <div class="footer-note">
-          This dashboard is intentionally minimal: it focuses on signal timing, current YES/NO asks, active position state, and realised paper results. Paper fills still assume ask-touch execution, so live execution may differ because of queue position, liquidity and latency.
-        </div>
-      </section>
-    </main>
-  </div>
+      <div class="card wide">
+        <div class="label">Recent</div>
+        <div id="history" class="history"><div class="empty">No settled trades yet.</div></div>
+      </div>
+    </section>
+  </main>
 
   <script>
-    const $ = (id) => document.getElementById(id);
+    const $ = id => document.getElementById(id);
 
     function cents(x) {
       const n = Number(x);
       if (!Number.isFinite(n) || n <= 0) return '—';
       return Math.round(n * 100) + '¢';
     }
-
-    function money(x, dp = 2) {
+    function money(x, d = 2) {
       const n = Number(x);
-      if (!Number.isFinite(n)) return '$0.00';
-      return '$' + n.toFixed(dp);
+      return '$' + (Number.isFinite(n) ? n : 0).toFixed(d);
     }
-
-    function signedMoney(x, dp = 4) {
+    function signed(x, d = 4) {
       const n = Number(x);
       if (!Number.isFinite(n)) return '$0.0000';
-      return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(dp);
+      return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(d);
     }
-
-    function pct(x, dp = 2) {
-      const n = Number(x);
-      if (!Number.isFinite(n)) return '0.00%';
-      return (n >= 0 ? '+' : '') + n.toFixed(dp) + '%';
-    }
-
-    function secondsLabel(s) {
-      const n = Number(s);
+    function clock(sec) {
+      const n = Number(sec);
       if (!Number.isFinite(n)) return '—';
-      const m = Math.floor(n / 60);
-      const sec = Math.max(0, n % 60);
-      return m + ':' + String(sec).padStart(2, '0');
+      const m = Math.floor(Math.max(0, n) / 60);
+      const s = Math.floor(Math.max(0, n) % 60);
+      return m + ':' + String(s).padStart(2, '0');
+    }
+    function setPnlClass(el, val) {
+      el.classList.remove('green','red');
+      if (Number(val) > 0) el.classList.add('green');
+      if (Number(val) < 0) el.classList.add('red');
+    }
+    function chipClass(el, val) {
+      el.classList.remove('good','bad');
+      if (Number(val) > 0) el.classList.add('good');
+      if (Number(val) < 0) el.classList.add('bad');
     }
 
-    function setClassByNumber(el, n) {
-      el.classList.remove('positive', 'negative', 'neutral');
-      if (n > 0) el.classList.add('positive');
-      else if (n < 0) el.classList.add('negative');
-      else el.classList.add('neutral');
-    }
-
-    function renderHistory(recentTrades) {
-      const wrap = $('historyWrap');
-      if (!recentTrades || recentTrades.length === 0) {
-        wrap.innerHTML = '<div class="empty">No settled paper trades yet.</div>';
+    function renderHistory(items) {
+      if (!items || !items.length) {
+        $('history').innerHTML = '<div class="empty">No settled trades yet.</div>';
         return;
       }
-
-      const rows = recentTrades.map((t) => {
+      $('history').innerHTML = items.slice(0, 5).map(t => {
         const pnl = Number(t.pnl || 0);
-        const cls = pnl >= 0 ? 'positive' : 'negative';
-        const reason = String(t.reason || 'SETTLEMENT').replaceAll('_', ' ');
-        return `
-          <tr>
-            <td>${t.time || '—'}</td>
-            <td>${reason}</td>
-            <td>${cents(t.entry)} → ${cents(t.exit)}</td>
-            <td class="num ${cls}">${signedMoney(pnl)}</td>
-          </tr>`;
+        const cls = pnl >= 0 ? 'green' : 'red';
+        const title = String(t.reason || 'Settlement').replaceAll('_', ' ');
+        return `<div class="trade">
+          <div>
+            <div class="trade-title">${title}</div>
+            <div class="trade-meta">${t.time || '—'} · ${cents(t.entry)} → ${cents(t.exit)}</div>
+          </div>
+          <div class="pnl ${cls}">${signed(pnl)}</div>
+        </div>`;
       }).join('');
-
-      wrap.innerHTML = `
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Result</th>
-              <th>Route</th>
-              <th class="num">PnL</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>`;
     }
 
-    async function updateDashboard() {
+    async function tick() {
       try {
         const res = await fetch('/api/live', { cache: 'no-store' });
         const data = await res.json();
-
         const stats = data.stats || {};
         const trade = data.trade || {};
         const prices = data.currentPrices || {};
         const market = data.market || {};
         const strategy = market.strategy || {};
 
-        const balance = Number(stats.currentBalance || 0);
-        const starting = Number(stats.startingBalance || 0);
-        const roi = starting > 0 ? ((balance - starting) / starting) * 100 : 0;
+        const bal = Number(stats.currentBalance || 0);
+        const start = Number(stats.startingBalance || 0);
+        const total = Number(stats.totalTrades || 0);
         const wins = Number(stats.wins || 0);
         const losses = Number(stats.losses || 0);
-        const total = Number(stats.totalTrades || 0);
-        const wr = total > 0 ? (wins / total) * 100 : 0;
-        const avg = total > 0 ? (balance - starting) / total : 0;
-
-        $('balance').textContent = money(balance, 2);
-        $('roi').textContent = pct(roi, 2) + ' ROI';
-        setClassByNumber($('roi'), roi);
-
-        $('winRate').textContent = wr.toFixed(1) + '%';
-        $('winLoss').textContent = `${wins}W / ${losses}L`;
-        $('totalTrades').textContent = total;
-        $('avgPnl').textContent = 'Avg PnL: ' + signedMoney(avg, 4);
-        setClassByNumber($('avgPnl'), avg);
-
-        $('marketTitle').textContent = market.title || 'Loading market…';
-        $('marketSlug').textContent = market.slug || '—';
-        $('timeLeft').textContent = secondsLabel(market.secondsLeft);
-        $('elapsed').textContent = 'Elapsed: ' + secondsLabel(market.elapsedSec);
-
-        const elapsed = Number(market.elapsedSec || 0);
-        const progress = Math.max(0, Math.min(100, (elapsed / 300) * 100));
-        $('progress').style.width = progress + '%';
-
-        $('yesAsk').textContent = cents(prices.YES);
-        $('noAsk').textContent = cents(prices.NO);
-        $('yesMeta').textContent = 'Current ask from live stream';
-        $('noMeta').textContent = 'Current ask from live stream';
-
+        const roi = start ? ((bal - start) / start) * 100 : 0;
+        const wr = total ? (wins / total) * 100 : 0;
+        const avg = total ? (bal - start) / total : 0;
         const entry = Number(strategy.entryAsk || 0.34);
-        $('ruleEntry').textContent = '≤ ' + Math.round(entry * 100) + '¢';
-        $('ruleIgnore').textContent = (strategy.ignoreBeforeSec ?? 10) + 's';
-        $('ruleMax').textContent = (strategy.maxEntrySec ?? 120) + 's';
-        $('rulePreferred').textContent = `${strategy.preferredStartSec ?? 30}–${strategy.preferredEndSec ?? 60}s`;
 
-        const yesTouched = Number(prices.YES || 0) > 0 && Number(prices.YES) <= entry;
-        const noTouched = Number(prices.NO || 0) > 0 && Number(prices.NO) <= entry;
-        $('yesTouch').textContent = yesTouched ? 'touch' : 'waiting';
-        $('yesTouch').className = yesTouched ? 'positive' : '';
-        $('noTouch').textContent = noTouched ? 'touch' : 'waiting';
-        $('noTouch').className = noTouched ? 'positive' : '';
+        $('balance').textContent = money(bal, 2);
+        $('roi').innerHTML = `ROI <strong>${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%</strong>`;
+        $('winrate').innerHTML = `Win <strong>${wr.toFixed(1)}%</strong>`;
+        $('trades').innerHTML = `Trades <strong>${total}</strong>`;
+        chipClass($('roi'), roi);
+
+        $('marketTitle').textContent = market.title || 'Loading BTC 5m market…';
+        $('marketSlug').textContent = market.slug || '—';
+        $('elapsed').textContent = clock(market.elapsedSec);
+        $('left').textContent = clock(market.secondsLeft);
+        $('progress').style.width = Math.max(0, Math.min(100, (Number(market.elapsedSec || 0) / 300) * 100)) + '%';
+
+        $('yes').textContent = cents(prices.YES);
+        $('no').textContent = cents(prices.NO);
+        const yHit = Number(prices.YES || 0) > 0 && Number(prices.YES) <= entry;
+        const nHit = Number(prices.NO || 0) > 0 && Number(prices.NO) <= entry;
+        $('yesTouch').textContent = yHit ? 'touch' : 'wait';
+        $('noTouch').textContent = nHit ? 'touch' : 'wait';
+        $('yesTouch').className = yHit ? 'touch hit' : 'touch';
+        $('noTouch').className = nHit ? 'touch hit' : 'touch';
+
+        $('entryRule').textContent = Math.round(entry * 100) + '¢';
+        $('ruleSub').textContent = `${strategy.ignoreBeforeSec ?? 10}–${strategy.maxEntrySec ?? 120}s · prefer ${strategy.preferredStartSec ?? 30}–${strategy.preferredEndSec ?? 60}s`;
 
         if (trade.active) {
-          $('pulse').className = 'dot active';
-          $('statusText').textContent = 'Position open';
-          $('positionSummary').textContent = trade.side || 'Open';
-          $('positionSummary').className = 'value ' + (trade.side === 'YES' ? 'blue' : 'purple');
-          $('positionSub').textContent = `${cents(trade.entryPrice)} entry • ${trade.quality || '—'}`;
-          $('posSide').textContent = trade.side || '—';
+          $('pulse').className = 'dot on';
+          $('status').textContent = 'Holding';
+          $('posSide').textContent = trade.side || 'Open';
+          $('posSide').className = 'pos-side ' + (trade.side === 'YES' ? 'yes' : 'no');
+          $('posSub').textContent = trade.reason ? String(trade.reason).replaceAll('_',' ') : 'Position open';
           $('posEntry').textContent = cents(trade.entryPrice);
-          $('posShares').textContent = Number(trade.shares || 0).toFixed(4);
-          $('posElapsed').textContent = (trade.entryElapsedSec ?? '—') + 's';
-          $('posQuality').textContent = String(trade.quality || '—').replaceAll('_', ' ');
+          $('quality').textContent = String(trade.quality || '—').replaceAll('_',' ');
+          $('entryTime').textContent = (trade.entryElapsedSec ?? '—') + 's';
+          $('shares').textContent = Number(trade.shares || 0).toFixed(3);
         } else {
           $('pulse').className = 'dot';
-          $('statusText').textContent = market.slug ? 'Awaiting signal' : 'Connecting…';
-          $('positionSummary').textContent = 'None';
-          $('positionSummary').className = 'value';
-          $('positionSub').textContent = market.slug ? 'Watching first touch' : 'No active market';
-          $('posSide').textContent = '—';
+          $('status').textContent = market.slug ? 'Hunting' : 'Syncing';
+          $('posSide').textContent = 'None';
+          $('posSide').className = 'pos-side';
+          $('posSub').textContent = market.slug ? 'Waiting for first touch' : 'No market loaded';
           $('posEntry').textContent = '—';
-          $('posShares').textContent = '—';
-          $('posElapsed').textContent = '—';
-          $('posQuality').textContent = '—';
+          $('quality').textContent = '—';
+          $('entryTime').textContent = '—';
+          $('shares').textContent = '—';
         }
 
+        $('avgPnl').textContent = signed(avg, 4);
+        setPnlClass($('avgPnl'), avg);
+        $('wl').textContent = `${wins}W / ${losses}L`;
+
         renderHistory(data.recentTrades || []);
-      } catch (err) {
-        $('statusText').textContent = 'Dashboard sync issue';
+      } catch (e) {
+        $('status').textContent = 'Offline';
       }
     }
 
-    updateDashboard();
-    setInterval(updateDashboard, 1200);
+    tick();
+    setInterval(tick, 1200);
   </script>
 </body>
 </html>
