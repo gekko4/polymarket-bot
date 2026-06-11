@@ -5,28 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>PolyBot Dashboard</title>
+  <title>PolyBot Terminal</title>
+  
+  <!-- Sleek technical font for that crypto-bot aesthetic -->
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
   <style>
     :root {
-      --bg: #030407;
-      --card-bg: linear-gradient(180deg, rgba(17, 24, 39, 0.6) 0%, rgba(10, 14, 23, 0.8) 100%);
-      --card-border: rgba(255, 255, 255, 0.06);
-      --card-highlight: rgba(255, 255, 255, 0.12);
+      /* Deep space dark theme with BTC orange and Poly cyan accents */
+      --bg-base: #07080a;
+      --glass-bg: rgba(18, 20, 28, 0.55);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-light: rgba(255, 255, 255, 0.12);
       
       --text-main: #f8fafc;
-      --text-muted: #8b95a3;
+      --text-muted: #8b95a5;
       
-      --gold-light: #fceea7;
-      --gold-mid: #d4af37;
-      --gold-dark: #aa771c;
+      --btc-orange: #f7931a;
+      --btc-glow: rgba(247, 147, 26, 0.4);
       
-      --blue-accent: #3b82f6;
-      --blue-deep: #1e3a8a;
+      --poly-blue: #00e5ff;
+      --poly-glow: rgba(0, 229, 255, 0.4);
       
-      --green: #10b981;
-      --red: #ef4444;
+      --green: #00e676;
+      --red: #ff3b30;
       
-      --radius: 20px;
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      
+      --font-family: 'Space Grotesk', system-ui, sans-serif;
     }
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
@@ -34,314 +41,370 @@
     body {
       min-height: 100vh;
       color: var(--text-main);
-      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      /* Deep black to dark blue elegant gradient */
-      background: radial-gradient(circle at 50% 0%, var(--blue-deep) 0%, var(--bg) 50%, var(--bg) 100%);
-      background-color: var(--bg);
-      padding: 20px 16px 32px;
+      font-family: var(--font-family);
+      background-color: var(--bg-base);
+      /* Ambient glowing orbs in the background */
+      background-image: 
+        radial-gradient(circle at 15% 0%, var(--poly-glow) 0%, transparent 40%),
+        radial-gradient(circle at 85% 100%, var(--btc-glow) 0%, transparent 40%);
+      background-attachment: fixed;
+      padding: 24px 16px 40px;
+      display: flex;
+      justify-content: center;
     }
 
     .app { 
       width: 100%; 
-      max-width: 480px; 
-      margin: 0 auto; 
+      max-width: 420px; 
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 20px;
     }
 
-    /* Top Navigation */
+    /* GLASS CARDS */
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-top: 1px solid var(--glass-light);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255,255,255,0.02);
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* TOP NAV */
     .top {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 4px 8px;
+      padding: 0 4px;
     }
 
     .brand {
-      font-size: 1.25rem;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      background: linear-gradient(90deg, var(--gold-light), var(--gold-mid));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      text-shadow: 0 2px 10px rgba(212, 175, 55, 0.2);
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, var(--poly-blue), var(--btc-orange));
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 12px var(--poly-glow);
+    }
+
+    .brand-icon::after {
+      content: '';
+      width: 10px;
+      height: 10px;
+      background: var(--bg-base);
+      border-radius: 50%;
     }
 
     .status-pill {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
+      gap: 8px;
+      padding: 6px 14px;
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--card-border);
-      color: var(--text-muted);
+      border: 1px solid var(--glass-border);
       font-size: 0.75rem;
       font-weight: 600;
-      letter-spacing: 0.03em;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .dot {
-      width: 6px;
-      height: 6px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      background: var(--gold-mid);
-      box-shadow: 0 0 10px var(--gold-mid);
+      background: var(--text-muted);
+      transition: all 0.3s ease;
     }
-    .dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
-
-    /* Cards Base */
-    .card {
-      border-radius: var(--radius);
-      border: 1px solid var(--card-border);
-      border-top-color: var(--card-highlight);
-      background: var(--card-bg);
-      box-shadow: 0 16px 32px rgba(0,0,0,0.4);
-      padding: 18px;
-      backdrop-filter: blur(12px);
+    .dot.on { 
+      background: var(--green); 
+      box-shadow: 0 0 10px var(--green); 
     }
 
-    /* Hero Section */
+    /* HERO BALANCE */
     .hero {
-      position: relative;
-      overflow: hidden;
-      padding: 24px 20px;
+      text-align: center;
+      padding: 32px 20px 24px;
     }
-    
+
     .hero::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg, transparent, var(--gold-mid), transparent);
-      opacity: 0.4;
+      top: 0; left: 20%; right: 20%; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--btc-orange), transparent);
+      opacity: 0.6;
     }
 
     .hero-label {
       color: var(--text-muted);
       font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
+      font-weight: 600;
+      letter-spacing: 0.2em;
       text-transform: uppercase;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .balance {
-      font-size: 3.2rem;
+      font-size: 3.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      background: linear-gradient(180deg, #fff 0%, #a0aabf 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 24px;
       line-height: 1;
-      font-weight: 800;
-      letter-spacing: -0.04em;
-      font-variant-numeric: tabular-nums;
-      margin-bottom: 16px;
     }
 
-    .stats-row {
-      display: flex;
-      justify-content: space-between;
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
-      background: rgba(0, 0, 0, 0.3);
+      background: rgba(0, 0, 0, 0.2);
       padding: 12px;
-      border-radius: 14px;
+      border-radius: var(--radius-md);
       border: 1px solid rgba(255,255,255,0.03);
     }
 
     .stat { display: flex; flex-direction: column; gap: 4px; }
-    .stat-label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; }
-    .stat-val { font-size: 0.9rem; font-weight: 700; color: var(--text-main); }
+    .stat-label { font-size: 0.65rem; color: var(--text-muted); letter-spacing: 0.1em; }
+    .stat-val { font-size: 0.95rem; font-weight: 600; }
     .stat-val.good { color: var(--green); }
     .stat-val.bad { color: var(--red); }
 
-    /* Market Info Compact */
+    /* MARKET CARD */
+    .market-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 16px;
+    }
+
     .market-title {
-      font-size: 1rem;
-      font-weight: 700;
-      line-height: 1.3;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--poly-blue);
+      text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      margin-bottom: 12px;
+      max-width: 75%;
     }
 
-    .progress-wrapper {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    
     .time-left {
-      font-size: 0.75rem;
+      font-size: 0.8rem;
       font-weight: 600;
-      color: var(--gold-mid);
-      white-space: nowrap;
+      color: var(--btc-orange);
+      background: rgba(247, 147, 26, 0.1);
+      padding: 4px 10px;
+      border-radius: 8px;
     }
 
-    .bar {
-      flex: 1;
-      height: 6px;
+    .progress-bar {
+      width: 100%;
+      height: 4px;
       background: rgba(0,0,0,0.5);
       border-radius: 999px;
       overflow: hidden;
+      margin-bottom: 24px;
     }
     
-    .fill {
+    .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--gold-dark), var(--gold-mid), var(--gold-light));
+      background: linear-gradient(90deg, var(--poly-blue), var(--btc-orange));
       border-radius: 999px;
-      transition: width 0.3s ease;
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    /* Price & Position Row */
-    .trade-status {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .price-row {
+    /* PRICES & POSITION */
+    .price-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
+      margin-bottom: 16px;
     }
 
     .price-box {
       background: rgba(0, 0, 0, 0.3);
-      border: 1px solid rgba(255,255,255,0.03);
-      padding: 12px;
-      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.04);
+      padding: 16px;
+      border-radius: var(--radius-md);
       text-align: center;
+      transition: all 0.3s;
     }
 
-    .price-box .label {
-      font-size: 0.65rem;
+    .price-box.active-yes { border-color: var(--poly-blue); background: rgba(0, 229, 255, 0.05); }
+    .price-box.active-no { border-color: var(--btc-orange); background: rgba(247, 147, 26, 0.05); }
+
+    .price-label {
+      font-size: 0.7rem;
       color: var(--text-muted);
-      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 8px;
+    }
+
+    .price-val {
+      font-size: 1.6rem;
       font-weight: 700;
-      letter-spacing: 0.1em;
-      margin-bottom: 6px;
     }
 
-    .price-box .val {
-      font-size: 1.4rem;
-      font-weight: 800;
-      font-variant-numeric: tabular-nums;
-    }
+    .val-yes { color: var(--poly-blue); text-shadow: 0 0 12px var(--poly-glow); }
+    .val-no { color: var(--btc-orange); text-shadow: 0 0 12px var(--btc-glow); }
 
-    .val.yes { color: var(--blue-accent); }
-    .val.no { color: var(--gold-mid); }
-
-    .position-info {
-      padding-top: 12px;
-      border-top: 1px solid rgba(255,255,255,0.06);
+    .position-bar {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      background: rgba(0,0,0,0.2);
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255,255,255,0.03);
     }
 
-    .pos-label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
-    .pos-details { font-size: 0.85rem; font-weight: 700; color: var(--text-main); }
-    .pos-details.active { color: var(--gold-mid); }
+    .pos-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+    .pos-details { font-size: 0.85rem; font-weight: 600; }
+    .pos-details.active { color: var(--green); }
 
-    /* History */
-    .history-header {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-bottom: 12px;
-    }
-
-    .history-list { display: flex; flex-direction: column; gap: 0; }
+    /* HISTORY */
+    .history-card { padding-bottom: 12px; }
     
+    .history-header {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
     .trade {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 0;
+      padding: 14px 0;
       border-bottom: 1px solid rgba(255,255,255,0.04);
     }
-    .trade:last-child { border-bottom: none; padding-bottom: 0; }
+    .trade:last-child { border-bottom: none; }
     
-    .trade-title { font-size: 0.85rem; font-weight: 600; color: var(--text-main); margin-bottom: 2px;}
-    .trade-meta { font-size: 0.7rem; color: var(--text-muted); }
+    .trade-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+      padding-right: 12px;
+    }
+
+    .trade-title { 
+      font-size: 0.85rem; 
+      font-weight: 600; 
+      white-space: nowrap; 
+      overflow: hidden; 
+      text-overflow: ellipsis; 
+    }
     
-    .pnl { font-size: 0.9rem; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .pnl.green { color: var(--green); }
-    .pnl.red { color: var(--red); }
+    .trade-meta { 
+      font-size: 0.75rem; 
+      color: var(--text-muted); 
+    }
+    
+    .trade-pnl { 
+      font-size: 1rem; 
+      font-weight: 700; 
+      text-align: right; 
+    }
+    .trade-pnl.green { color: var(--green); }
+    .trade-pnl.red { color: var(--red); }
 
     .empty {
       text-align: center;
       color: var(--text-muted);
-      font-size: 0.8rem;
-      padding: 10px 0;
+      font-size: 0.85rem;
+      padding: 20px 0;
     }
   </style>
 </head>
 <body>
   <main class="app">
     
+    <!-- Header -->
     <header class="top">
-      <div class="brand">PolyBot</div>
-      <div class="status-pill"><span id="pulse" class="dot"></span><span id="status">Syncing</span></div>
+      <div class="brand">
+        <div class="brand-icon"></div>
+        POLYBOT
+      </div>
+      <div class="status-pill">
+        <span id="pulse" class="dot"></span>
+        <span id="status">Syncing</span>
+      </div>
     </header>
 
-    <!-- Main Balance & Stats -->
-    <section class="card hero">
-      <div class="hero-label">Paper Balance</div>
+    <!-- Hero / Balance -->
+    <section class="glass-card hero">
+      <div class="hero-label">Paper Equity</div>
       <div id="balance" class="balance">$0.00</div>
       
-      <div class="stats-row">
+      <div class="stats-grid">
         <div class="stat">
           <span class="stat-label">ROI</span>
           <span id="roi" class="stat-val">0.00%</span>
         </div>
-        <div class="stat">
-          <span class="stat-label">Win Rate</span>
+        <div class="stat" style="text-align: center;">
+          <span class="stat-label">WIN %</span>
           <span id="winrate" class="stat-val">0.0%</span>
         </div>
         <div class="stat" style="text-align: right;">
-          <span class="stat-label">W / L</span>
-          <span id="wl" class="stat-val">0 / 0</span>
+          <span class="stat-label">W/L</span>
+          <span id="wl" class="stat-val">0/0</span>
         </div>
       </div>
     </section>
 
-    <!-- Compressed Market & Position Card -->
-    <section class="card">
-      <div id="marketTitle" class="market-title">Loading Market...</div>
-      
-      <div class="progress-wrapper">
+    <!-- Market & Position -->
+    <section class="glass-card">
+      <div class="market-header">
+        <div id="marketTitle" class="market-title">Scanning...</div>
         <div class="time-left" id="left">--:--</div>
-        <div class="bar"><div id="progress" class="fill"></div></div>
+      </div>
+      
+      <div class="progress-bar">
+        <div id="progress" class="progress-fill"></div>
       </div>
 
-      <div class="trade-status">
-        <div class="price-row">
-          <div class="price-box">
-            <div class="label">YES Ask</div>
-            <div id="yes" class="val yes">—</div>
-          </div>
-          <div class="price-box">
-            <div class="label">NO Ask</div>
-            <div id="no" class="val no">—</div>
-          </div>
+      <div class="price-grid">
+        <div id="boxYes" class="price-box">
+          <div class="price-label">YES</div>
+          <div id="yes" class="price-val val-yes">—</div>
         </div>
+        <div id="boxNo" class="price-box">
+          <div class="price-label">NO</div>
+          <div id="no" class="price-val val-no">—</div>
+        </div>
+      </div>
 
-        <div class="position-info">
-          <div class="pos-label">Status</div>
-          <div id="posDetails" class="pos-details">Waiting for entry...</div>
-        </div>
+      <div class="position-bar">
+        <div class="pos-label">Status</div>
+        <div id="posDetails" class="pos-details">Waiting for setup</div>
       </div>
     </section>
 
-    <!-- Compact History -->
-    <section class="card">
-      <div class="history-header">Recent Trades</div>
-      <div id="history" class="history-list">
+    <!-- Recent Trades -->
+    <section class="glass-card history-card">
+      <div class="history-header">Recent Activity</div>
+      <div id="history">
         <div class="empty">No settled trades yet.</div>
       </div>
     </section>
@@ -351,48 +414,65 @@
   <script>
     const $ = id => document.getElementById(id);
 
+    // Helpers for formatting text beautifully
     function cents(x) {
       const n = Number(x);
       if (!Number.isFinite(n) || n <= 0) return '—';
       return Math.round(n * 100) + '¢';
     }
     
-    function money(x, d = 2) {
+    function money(x) {
       const n = Number(x);
-      return '$' + (Number.isFinite(n) ? n : 0).toFixed(d);
+      return '$' + (Number.isFinite(n) ? n : 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
     
-    function signed(x, d = 2) {
+    function signed(x) {
       const n = Number(x);
       if (!Number.isFinite(n)) return '$0.00';
-      return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(d);
+      return (n >= 0 ? '+' : '-') + '$' + Math.abs(n).toFixed(2);
     }
     
     function clock(sec) {
       const n = Number(sec);
-      if (!Number.isFinite(n)) return '—';
-      const m = Math.floor(Math.max(0, n) / 60);
-      const s = Math.floor(Math.max(0, n) % 60);
+      if (!Number.isFinite(n) || n < 0) return '0:00';
+      const m = Math.floor(n / 60);
+      const s = Math.floor(n % 60);
       return m + ':' + String(s).padStart(2, '0');
     }
 
+    // Shrinks bulky Polymarket titles to clean, terminal-style strings
+    function formatTitle(title) {
+      if (!title) return 'Scanning Markets...';
+      return title
+        .replace(/Bitcoin/gi, 'BTC')
+        .replace(/price/gi, '')
+        .replace(/above/gi, '>')
+        .replace(/below/gi, '<')
+        .replace(/\?/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
     function renderHistory(items) {
+      const container = $('history');
       if (!items || !items.length) {
-        $('history').innerHTML = '<div class="empty">No settled trades yet.</div>';
+        container.innerHTML = '<div class="empty">No settled trades yet.</div>';
         return;
       }
-      // Show only top 3 to keep it mobile-friendly
-      $('history').innerHTML = items.slice(0, 3).map(t => {
+      
+      container.innerHTML = items.slice(0, 3).map(t => {
         const pnl = Number(t.pnl || 0);
         const cls = pnl >= 0 ? 'green' : 'red';
-        const title = String(t.reason || 'Settlement').replaceAll('_', ' ');
-        return `<div class="trade">
-          <div>
-            <div class="trade-title">${title}</div>
-            <div class="trade-meta">${cents(t.entry)} → ${cents(t.exit)}</div>
+        const title = formatTitle(String(t.reason || 'Settlement').replaceAll('_', ' '));
+        return `
+          <div class="trade">
+            <div class="trade-info">
+              <div class="trade-title">${title}</div>
+              <div class="trade-meta">${cents(t.entry)} → ${cents(t.exit)}</div>
+            </div>
+            <div class="trade-pnl ${cls}">${signed(pnl)}</div>
           </div>
-          <div class="pnl ${cls}">${signed(pnl)}</div>
-        </div>`;
+        `;
       }).join('');
     }
 
@@ -410,46 +490,53 @@
         const total = Number(stats.totalTrades || 0);
         const wins = Number(stats.wins || 0);
         const losses = Number(stats.losses || 0);
+        
         const roi = start ? ((bal - start) / start) * 100 : 0;
         const wr = total ? (wins / total) * 100 : 0;
 
-        // Hero Update
-        $('balance').textContent = money(bal, 2);
-        
+        // Balance & Stats
+        $('balance').textContent = money(bal);
         $('roi').textContent = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
         $('roi').className = 'stat-val ' + (roi >= 0 ? 'good' : 'bad');
-        
         $('winrate').textContent = `${wr.toFixed(1)}%`;
-        $('wl').textContent = `${wins} / ${losses}`;
+        $('wl').textContent = `${wins}/${losses}`;
 
-        // Market Details Update
-        $('marketTitle').textContent = market.title || 'Scanning markets...';
-        $('left').textContent = clock(market.secondsLeft) + ' Left';
+        // Market Data
+        $('marketTitle').textContent = formatTitle(market.title);
+        $('left').textContent = clock(market.secondsLeft);
         $('progress').style.width = Math.max(0, Math.min(100, (Number(market.elapsedSec || 0) / 300) * 100)) + '%';
 
-        // Price Updates
+        // Pricing
         $('yes').textContent = cents(prices.YES);
         $('no').textContent = cents(prices.NO);
 
-        // Position Updates
+        // Position Logic & Highlights
+        const isYes = trade.active && String(trade.side).toUpperCase() === 'YES';
+        const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
+        
+        $('boxYes').className = isYes ? 'price-box active-yes' : 'price-box';
+        $('boxNo').className = isNo ? 'price-box active-no' : 'price-box';
+
         if (trade.active) {
           $('pulse').className = 'dot on';
           $('status').textContent = 'Holding';
           $('posDetails').className = 'pos-details active';
-          $('posDetails').textContent = `Holding ${trade.side || 'Open'} @ ${cents(trade.entryPrice)}`;
+          $('posDetails').textContent = `${trade.side || 'OPEN'} @ ${cents(trade.entryPrice)}`;
         } else {
           $('pulse').className = 'dot';
           $('status').textContent = market.slug ? 'Hunting' : 'Syncing';
           $('posDetails').className = 'pos-details';
-          $('posDetails').textContent = market.slug ? 'Waiting for entry...' : 'No market loaded';
+          $('posDetails').textContent = market.slug ? 'Waiting for setup...' : 'Awaiting market';
         }
 
         renderHistory(data.recentTrades || []);
       } catch (e) {
         $('status').textContent = 'Offline';
+        $('pulse').className = 'dot';
       }
     }
 
+    // Init & Loop
     tick();
     setInterval(tick, 1200);
   </script>
