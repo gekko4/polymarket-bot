@@ -7,12 +7,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>PolyBot Terminal</title>
   
-  <!-- Sleek technical font for that crypto-bot aesthetic -->
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   
   <style>
     :root {
-      /* Deep space dark theme with BTC orange and Poly cyan accents */
       --bg-base: #07080a;
       --glass-bg: rgba(18, 20, 28, 0.55);
       --glass-border: rgba(255, 255, 255, 0.08);
@@ -20,6 +18,9 @@
       
       --text-main: #f8fafc;
       --text-muted: #8b95a5;
+      
+      --gold-light: #FDE047;
+      --gold-mid: #D97706;
       
       --btc-orange: #f7931a;
       --btc-glow: rgba(247, 147, 26, 0.4);
@@ -43,7 +44,6 @@
       color: var(--text-main);
       font-family: var(--font-family);
       background-color: var(--bg-base);
-      /* Ambient glowing orbs in the background */
       background-image: 
         radial-gradient(circle at 15% 0%, var(--poly-glow) 0%, transparent 40%),
         radial-gradient(circle at 85% 100%, var(--btc-glow) 0%, transparent 40%);
@@ -72,7 +72,16 @@
       box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255,255,255,0.02);
       padding: 22px;
       position: relative;
-      overflow: hidden;
+    }
+
+    /* SECTION HEADERS */
+    .section-header {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      font-weight: 600;
     }
 
     /* TOP NAV */
@@ -84,30 +93,13 @@
     }
 
     .brand {
-      font-size: 1.1rem;
-      font-weight: 700;
+      font-size: 1.3rem;
+      font-weight: 800;
       letter-spacing: 0.1em;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .brand-icon {
-      width: 24px;
-      height: 24px;
-      background: linear-gradient(135deg, var(--poly-blue), var(--btc-orange));
-      border-radius: 8px;
-      display: grid;
-      place-items: center;
-      box-shadow: 0 0 12px var(--poly-glow);
-    }
-
-    .brand-icon::after {
-      content: '';
-      width: 10px;
-      height: 10px;
-      background: var(--bg-base);
-      border-radius: 50%;
+      background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold-mid) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 4px 12px rgba(217, 119, 6, 0.3);
     }
 
     .status-pill {
@@ -131,32 +123,21 @@
       background: var(--text-muted);
       transition: all 0.3s ease;
     }
-    .dot.on { 
-      background: var(--green); 
-      box-shadow: 0 0 10px var(--green); 
-    }
+    .dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
 
     /* HERO BALANCE */
     .hero {
       text-align: center;
       padding: 32px 20px 24px;
+      overflow: hidden;
     }
 
     .hero::before {
       content: '';
       position: absolute;
       top: 0; left: 20%; right: 20%; height: 1px;
-      background: linear-gradient(90deg, transparent, var(--btc-orange), transparent);
+      background: linear-gradient(90deg, transparent, var(--gold-mid), transparent);
       opacity: 0.6;
-    }
-
-    .hero-label {
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      margin-bottom: 8px;
     }
 
     .balance {
@@ -170,28 +151,41 @@
       line-height: 1;
     }
 
+    /* DYNAMIC STATS GRID */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
-      background: rgba(0, 0, 0, 0.2);
       padding: 12px;
       border-radius: var(--radius-md);
-      border: 1px solid rgba(255,255,255,0.03);
+      transition: all 0.4s ease;
+      border: 1px solid var(--glass-border);
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    /* Dynamic colors applied via JS */
+    .stats-grid.positive {
+      background: rgba(0, 230, 118, 0.08);
+      border-color: rgba(0, 230, 118, 0.2);
+      box-shadow: inset 0 0 20px rgba(0, 230, 118, 0.05);
+    }
+
+    .stats-grid.negative {
+      background: rgba(255, 59, 48, 0.08);
+      border-color: rgba(255, 59, 48, 0.2);
+      box-shadow: inset 0 0 20px rgba(255, 59, 48, 0.05);
     }
 
     .stat { display: flex; flex-direction: column; gap: 4px; }
     .stat-label { font-size: 0.65rem; color: var(--text-muted); letter-spacing: 0.1em; }
-    .stat-val { font-size: 0.95rem; font-weight: 600; }
-    .stat-val.good { color: var(--green); }
-    .stat-val.bad { color: var(--red); }
+    .stat-val { font-size: 0.95rem; font-weight: 600; color: var(--text-main); }
 
     /* MARKET CARD */
     .market-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-end;
-      margin-bottom: 16px;
+      align-items: center;
+      margin-bottom: 20px;
     }
 
     .market-title {
@@ -202,33 +196,48 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 75%;
+      flex: 1;
+      padding-right: 12px;
+    }
+
+    /* CIRCULAR TIMER BADGE */
+    .timer-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--glass-border);
+      padding: 4px 10px 4px 6px;
+      border-radius: 999px;
     }
 
     .time-left {
       font-size: 0.8rem;
       font-weight: 600;
-      color: var(--btc-orange);
-      background: rgba(247, 147, 26, 0.1);
-      padding: 4px 10px;
-      border-radius: 8px;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
     }
 
-    .progress-bar {
-      width: 100%;
-      height: 4px;
-      background: rgba(0,0,0,0.5);
-      border-radius: 999px;
-      overflow: hidden;
-      margin-bottom: 24px;
+    .svg-ring {
+      width: 18px;
+      height: 18px;
     }
     
-    .progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--poly-blue), var(--btc-orange));
-      border-radius: 999px;
-      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    .svg-ring-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.1);
+      stroke-width: 3;
+    }
+    
+    .svg-ring-fill {
+      fill: none;
+      stroke: var(--gold-mid);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 100, 100;
+      transition: stroke-dasharray 1s linear, stroke 0.3s;
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
     }
 
     /* PRICES & POSITION */
@@ -258,11 +267,7 @@
       margin-bottom: 8px;
     }
 
-    .price-val {
-      font-size: 1.6rem;
-      font-weight: 700;
-    }
-
+    .price-val { font-size: 1.6rem; font-weight: 700; }
     .val-yes { color: var(--poly-blue); text-shadow: 0 0 12px var(--poly-glow); }
     .val-no { color: var(--btc-orange); text-shadow: 0 0 12px var(--btc-glow); }
 
@@ -278,18 +283,10 @@
 
     .pos-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
     .pos-details { font-size: 0.85rem; font-weight: 600; }
-    .pos-details.active { color: var(--green); }
+    .pos-details.active { color: var(--gold-mid); }
 
     /* HISTORY */
     .history-card { padding-bottom: 12px; }
-    
-    .history-header {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      margin-bottom: 16px;
-    }
 
     .trade {
       display: flex;
@@ -300,41 +297,15 @@
     }
     .trade:last-child { border-bottom: none; }
     
-    .trade-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      overflow: hidden;
-      padding-right: 12px;
-    }
-
-    .trade-title { 
-      font-size: 0.85rem; 
-      font-weight: 600; 
-      white-space: nowrap; 
-      overflow: hidden; 
-      text-overflow: ellipsis; 
-    }
+    .trade-info { display: flex; flex-direction: column; gap: 4px; overflow: hidden; padding-right: 12px; }
+    .trade-title { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .trade-meta { font-size: 0.75rem; color: var(--text-muted); }
     
-    .trade-meta { 
-      font-size: 0.75rem; 
-      color: var(--text-muted); 
-    }
-    
-    .trade-pnl { 
-      font-size: 1rem; 
-      font-weight: 700; 
-      text-align: right; 
-    }
+    .trade-pnl { font-size: 1rem; font-weight: 700; text-align: right; }
     .trade-pnl.green { color: var(--green); }
     .trade-pnl.red { color: var(--red); }
 
-    .empty {
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      padding: 20px 0;
-    }
+    .empty { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 20px 0; }
   </style>
 </head>
 <body>
@@ -342,10 +313,7 @@
     
     <!-- Header -->
     <header class="top">
-      <div class="brand">
-        <div class="brand-icon"></div>
-        POLYBOT
-      </div>
+      <div class="brand">POLYBOT</div>
       <div class="status-pill">
         <span id="pulse" class="dot"></span>
         <span id="status">Syncing</span>
@@ -354,10 +322,11 @@
 
     <!-- Hero / Balance -->
     <section class="glass-card hero">
-      <div class="hero-label">Paper Equity</div>
+      <div class="section-header">Paper Equity</div>
       <div id="balance" class="balance">$0.00</div>
       
-      <div class="stats-grid">
+      <!-- Dynamic colored stat grid -->
+      <div id="statsGrid" class="stats-grid">
         <div class="stat">
           <span class="stat-label">ROI</span>
           <span id="roi" class="stat-val">0.00%</span>
@@ -375,35 +344,41 @@
 
     <!-- Market & Position -->
     <section class="glass-card">
+      <div class="section-header">Live Market Data</div>
+      
       <div class="market-header">
         <div id="marketTitle" class="market-title">Scanning...</div>
-        <div class="time-left" id="left">--:--</div>
-      </div>
-      
-      <div class="progress-bar">
-        <div id="progress" class="progress-fill"></div>
+        
+        <!-- New sleek SVG timer badge -->
+        <div class="timer-badge">
+          <svg class="svg-ring" viewBox="0 0 36 36">
+            <path class="svg-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path id="timeRing" class="svg-ring-fill" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+          </svg>
+          <div class="time-left" id="left">--:--</div>
+        </div>
       </div>
 
       <div class="price-grid">
         <div id="boxYes" class="price-box">
-          <div class="price-label">YES</div>
+          <div class="price-label">YES ASK</div>
           <div id="yes" class="price-val val-yes">—</div>
         </div>
         <div id="boxNo" class="price-box">
-          <div class="price-label">NO</div>
+          <div class="price-label">NO ASK</div>
           <div id="no" class="price-val val-no">—</div>
         </div>
       </div>
 
       <div class="position-bar">
-        <div class="pos-label">Status</div>
+        <div class="pos-label">Order Status</div>
         <div id="posDetails" class="pos-details">Waiting for setup</div>
       </div>
     </section>
 
     <!-- Recent Trades -->
     <section class="glass-card history-card">
-      <div class="history-header">Recent Activity</div>
+      <div class="section-header">Recent Activity</div>
       <div id="history">
         <div class="empty">No settled trades yet.</div>
       </div>
@@ -414,7 +389,6 @@
   <script>
     const $ = id => document.getElementById(id);
 
-    // Helpers for formatting text beautifully
     function cents(x) {
       const n = Number(x);
       if (!Number.isFinite(n) || n <= 0) return '—';
@@ -440,7 +414,6 @@
       return m + ':' + String(s).padStart(2, '0');
     }
 
-    // Shrinks bulky Polymarket titles to clean, terminal-style strings
     function formatTitle(title) {
       if (!title) return 'Scanning Markets...';
       return title
@@ -494,23 +467,36 @@
         const roi = start ? ((bal - start) / start) * 100 : 0;
         const wr = total ? (wins / total) * 100 : 0;
 
-        // Balance & Stats
+        // Dynamic Colors & Stats Data
         $('balance').textContent = money(bal);
         $('roi').textContent = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
-        $('roi').className = 'stat-val ' + (roi >= 0 ? 'good' : 'bad');
         $('winrate').textContent = `${wr.toFixed(1)}%`;
         $('wl').textContent = `${wins}/${losses}`;
+        
+        // Change grid background based on profit/loss
+        if (roi > 0) $('statsGrid').className = 'stats-grid positive';
+        else if (roi < 0) $('statsGrid').className = 'stats-grid negative';
+        else $('statsGrid').className = 'stats-grid';
 
-        // Market Data
+        // Market Data & Circular SVG Timer logic
         $('marketTitle').textContent = formatTitle(market.title);
         $('left').textContent = clock(market.secondsLeft);
-        $('progress').style.width = Math.max(0, Math.min(100, (Number(market.elapsedSec || 0) / 300) * 100)) + '%';
+        
+        // Calculate stroke-dasharray (100 is a full circle)
+        // Elapsed determines how much of the 5-min (300 sec) has passed
+        const totalSecs = 300; 
+        const elapsed = Number(market.elapsedSec || 0);
+        const remainingPct = Math.max(0, Math.min(100, ((totalSecs - elapsed) / totalSecs) * 100));
+        
+        const ring = $('timeRing');
+        ring.style.strokeDasharray = `${remainingPct}, 100`;
+        // Turn ring red if < 1 minute left (less than 20%)
+        ring.style.stroke = remainingPct < 20 ? 'var(--red)' : 'var(--gold-mid)';
 
         // Pricing
         $('yes').textContent = cents(prices.YES);
         $('no').textContent = cents(prices.NO);
 
-        // Position Logic & Highlights
         const isYes = trade.active && String(trade.side).toUpperCase() === 'YES';
         const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
         
@@ -536,7 +522,6 @@
       }
     }
 
-    // Init & Loop
     tick();
     setInterval(tick, 1200);
   </script>
