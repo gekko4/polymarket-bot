@@ -52,6 +52,18 @@ const CONFIG = {
     oneTradePerMarket: true,
   },
 
+  EXIT: {
+    enabled: String(process.env.EXIT_ENABLED || 'true').toLowerCase() === 'true',
+    killAt180IfBidBelowEntry: String(process.env.KILL_180_BID_BELOW_ENTRY || 'true').toLowerCase() === 'true',
+    killAt180IfBidBelow: Number(process.env.KILL_180_BID_BELOW || 0),
+    killAt240IfBidBelow: Number(process.env.KILL_240_BID_BELOW || 0.34),
+    killAt270IfBidBelow: Number(process.env.KILL_270_BID_BELOW || 0.34),
+    confirmAt180Bid: Number(process.env.CONFIRM_180_BID || 0.85),
+    confirmAt210Bid: Number(process.env.CONFIRM_210_BID || 0.90),
+    confirmAt240Bid: Number(process.env.CONFIRM_240_BID || 0.65),
+    confirmAt240MaxMomentum30: Number(process.env.CONFIRM_240_MAX_MOM30 || 0.05),
+    requireBidForExit: String(process.env.REQUIRE_BID_FOR_EXIT || 'true').toLowerCase() === 'true',
+  },
   PAPER: {
     startingBalance: Number(process.env.STARTING_BALANCE || 100),
     stakeUsd: Number(process.env.STAKE_USD || 1),
@@ -109,6 +121,9 @@ function emptyMarket() {
       YES: { ask: null, bid: null, askSize: null, bidSize: null, spread: null },
       NO: { ask: null, bid: null, askSize: null, bidSize: null, spread: null },
     },
+    priceTicks: [],
+    holdConfirmed: false,
+    holdConfirmReason: null,
   };
 }
 
@@ -126,6 +141,9 @@ function emptyTrade() {
     entryElapsedSec: 0,
     quality: null,
     reason: null,
+    exitMode: 'HOLD_TO_SETTLEMENT',
+    confirmedHold: false,
+    confirmReason: null,
   };
 }
 
@@ -145,7 +163,7 @@ console.log = function (...args) {
 };
 
 if (!fs.existsSync(CONFIG.FILES.trades) || fs.statSync(CONFIG.FILES.trades).size === 0) {
-  tradeStream.write('Timestamp,MarketSlug,Event,Side,EntryPrice,ExitValue,Shares,EntryElapsedSec,Quality,Reason,PnL_USD,Balance_USD,WinRate_Pct\n');
+  tradeStream.write('Timestamp,MarketSlug,Event,Side,EntryPrice,ExitValue,Shares,EntryElapsedSec,Quality,Reason,PnL_USD,Balance_USD,WinRate_Pct,ExitElapsedSec,ExitReason,HeldBid,Momentum30\n');
 }
 
 if (!fs.existsSync(CONFIG.FILES.prices) || fs.statSync(CONFIG.FILES.prices).size === 0) {
@@ -161,6 +179,14 @@ function logPriceTick() {
   const y = currentMarket.quote.YES;
   const n = currentMarket.quote.NO;
   if (y.ask == null || n.ask == null) return;
+
+  const tick = {
+    elapsedSec: getElapsedSec(),
+    YES: { ask: y.ask, bid: y.bid },
+    NO: { ask: n.ask, bid: n.bid },
+  };
+  currentMarket.priceTicks.push(tick);
+  if (currentMarket.priceTicks.length > 400) currentMarket.priceTicks.shift();
 
   priceStream.write([
     new Date().toISOString(),
@@ -481,7 +507,87 @@ function executePaperEntry(signal) {
     '',
     stats.currentBalance.toFixed(2),
     `${winRate}%`,
+    '',
+    '',
+    '',
+    '',
   ].join(',') + '\n');
+}
+
+
+function getHeldBid(side = trade.side) {
+  if (!side || !currentMarket.quote[side]) return null;
+  const b = currentMarket.quote[side].bid;
+  return b == null || Number.isNaN(Number(b)) ? null : Number(b);
+}
+
+function getHeldBidAtOrBefore(side, targetElapsedSec) {
+  if (!side || !Array.isArray(currentMarket.priceTicks)) return null;
+  for (let i = currentMarket.priceTicks.length - 1; i >= 0; i--) {
+    const t = currentMarket.priceTicks[i];
+    if (t.elapsedSec <= targetElapsedSec && t[side] && t[side].bid != null) return Number(t[side].bid);
+  }
+  return null;
+}
+
+function getMomentum30(side, nowElapsedSec = getElapsedSec()) {
+  const nowBid = getHeldBid(side);
+  const priorBid = getHeldBidAtOrBefore(side, nowElapsedSec - 30);
+  if (nowBid == null || priorBid == null) return null;
+  return nowBid - priorBid;
+}
+
+function markHoldConfirmed(reason) {
+  if (!trade.active || trade.confirmedHold) return;
+  trade.confirmedHold = true;
+  trade.confirmReason = reason;
+  currentMarket.holdConfirmed = true;
+  currentMarket.holdConfirmReason = reason;
+  console.log(`${colors.green}[HOLD CONFIRMED] ${reason} | ${trade.side} bid=${fmt(getHeldBid())} | elapsed=${getElapsedSec()}s${colors.reset}`);
+}
+
+function executePaperExit(reason, exitBid, momentum30 = null) {
+  if (!trade.active) return;
+  if (exitBid == null || Number.isNaN(Number(exitBid))) return;
+  const elapsed = getElapsedSec();
+  const grossReturn = Number(exitBid) * trade.shares;
+  const entryFee = trade.entryCost * (CONFIG.PAPER.feeBps / 10000);
+  const exitFee = grossReturn * (CONFIG.PAPER.feeBps / 10000);
+  const pnl = grossReturn - trade.entryCost - entryFee - exitFee;
+  stats.totalTrades += 1;
+  if (pnl > 0) stats.wins += 1;
+  else stats.losses += 1;
+  stats.currentBalance += pnl;
+  const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
+  const c = pnl > 0 ? colors.green : colors.red;
+  console.log(`\n${colors.yellow}[PAPER EXIT] ${reason} | Sell ${trade.side} bid=${fmt(exitBid)} | elapsed=${elapsed}s | PnL=${c}${pnl >= 0 ? '+' : ''}$${pnl.toFixed(4)}${colors.reset}`);
+  tradeStream.write([
+    new Date().toISOString(), trade.marketSlug, 'EXIT', trade.side, fmt(trade.entryPrice), fmt(exitBid),
+    trade.shares.toFixed(4), trade.entryElapsedSec, trade.quality, trade.reason, pnl.toFixed(4),
+    stats.currentBalance.toFixed(2), `${winRate}%`, elapsed, reason, fmt(exitBid), momentum30 == null ? '' : fmt(momentum30),
+  ].join(',') + '\n');
+  recentTrades.unshift({ time: new Date().toLocaleTimeString(), reason: `${reason} ${trade.side}`, entry: trade.entryPrice.toFixed(3), exit: Number(exitBid).toFixed(3), pnl });
+  if (recentTrades.length > 10) recentTrades.pop();
+  trade = emptyTrade();
+}
+
+function manageOpenTrade() {
+  if (!CONFIG.EXIT.enabled || !trade.active || !currentMarket.slug) return;
+  const elapsed = getElapsedSec();
+  const heldBid = getHeldBid();
+  if (heldBid == null) return;
+  const momentum30 = getMomentum30(trade.side, elapsed);
+
+  if (elapsed >= 180 && heldBid >= CONFIG.EXIT.confirmAt180Bid) markHoldConfirmed(`CONFIRM_180_BID_GE_${Math.round(CONFIG.EXIT.confirmAt180Bid * 100)}C`);
+  if (elapsed >= 210 && heldBid >= CONFIG.EXIT.confirmAt210Bid) markHoldConfirmed(`CONFIRM_210_BID_GE_${Math.round(CONFIG.EXIT.confirmAt210Bid * 100)}C`);
+  if (elapsed >= 240 && heldBid >= CONFIG.EXIT.confirmAt240Bid && momentum30 != null && momentum30 < CONFIG.EXIT.confirmAt240MaxMomentum30) {
+    markHoldConfirmed(`CONFIRM_240_BID_GE_${Math.round(CONFIG.EXIT.confirmAt240Bid * 100)}C_MOM30_LT_${Math.round(CONFIG.EXIT.confirmAt240MaxMomentum30 * 100)}C`);
+  }
+  if (trade.confirmedHold) return;
+  if (elapsed >= 180 && CONFIG.EXIT.killAt180IfBidBelowEntry && heldBid < trade.entryPrice) return executePaperExit('TIME_KILL_180_BID_BELOW_ENTRY', heldBid, momentum30);
+  if (elapsed >= 180 && CONFIG.EXIT.killAt180IfBidBelow > 0 && heldBid < CONFIG.EXIT.killAt180IfBidBelow) return executePaperExit(`TIME_KILL_180_BID_LT_${Math.round(CONFIG.EXIT.killAt180IfBidBelow * 100)}C`, heldBid, momentum30);
+  if (elapsed >= 240 && heldBid < CONFIG.EXIT.killAt240IfBidBelow) return executePaperExit(`TIME_KILL_240_BID_LT_${Math.round(CONFIG.EXIT.killAt240IfBidBelow * 100)}C`, heldBid, momentum30);
+  if (elapsed >= 270 && heldBid < CONFIG.EXIT.killAt270IfBidBelow) return executePaperExit(`TIME_KILL_270_BID_LT_${Math.round(CONFIG.EXIT.killAt270IfBidBelow * 100)}C`, heldBid, momentum30);
 }
 
 function settleIfNeeded() {
@@ -536,6 +642,10 @@ function settleIfNeeded() {
     pnl.toFixed(4),
     stats.currentBalance.toFixed(2),
     `${winRate}%`,
+    '',
+    '',
+    '',
+    '',
   ].join(',') + '\n');
 
   recentTrades.unshift({
@@ -575,6 +685,7 @@ http.createServer((req, res) => {
         elapsedSec: getElapsedSec(),
         secondsLeft: getSecondsLeft(),
         strategy: CONFIG.STRATEGY,
+        exit: CONFIG.EXIT,
       },
     }));
     return;
@@ -600,6 +711,7 @@ async function run() {
   console.log(`${colors.magenta}Booting BTC 5m First-Touch-34 PAPER BOT...${colors.reset}`);
   console.log(`${colors.gray}No PRIVATE_KEY required. This file does paper trading only.${colors.reset}`);
   console.log(`${colors.gray}Strategy: ignore <${CONFIG.STRATEGY.ignoreBeforeSec}s, buy first side <= ${CONFIG.STRATEGY.entryAsk}, max entry ${CONFIG.STRATEGY.maxEntrySec}s, prefer ${CONFIG.STRATEGY.preferredStartSec}-${CONFIG.STRATEGY.preferredEndSec}s.${colors.reset}`);
+  console.log(`${colors.gray}Exit layer: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | kill180BelowEntry=${CONFIG.EXIT.killAt180IfBidBelowEntry} | kill240Bid<${CONFIG.EXIT.killAt240IfBidBelow} | confirmations 180>=${CONFIG.EXIT.confirmAt180Bid}, 210>=${CONFIG.EXIT.confirmAt210Bid}, 240>=${CONFIG.EXIT.confirmAt240Bid}+flat30.${colors.reset}`);
 
   await loadCurrentMarket();
 
@@ -611,6 +723,7 @@ async function run() {
       return;
     }
 
+    manageOpenTrade();
     settleIfNeeded();
 
     // Move to next market after expiry.
