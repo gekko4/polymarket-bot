@@ -41,9 +41,7 @@ const CONFIG = {
   },
 
   STRATEGY: {
-    // Empirical pattern strategy from the attached price-log analysis.
-    // All entries cross the ask in paper mode, so maxAsk caps are intentionally
-    // a bit above the mid-price bucket to allow normal 1–2c spreads.
+    // Confirmed Direction V3 — based on the full 492k price-log interaction analysis.
     maxAllowedSpread: Number(process.env.MAX_ALLOWED_SPREAD || 0.03),
     requireBid: String(process.env.REQUIRE_BID || 'true').toLowerCase() === 'true',
     oneTradePerMarket: true,
@@ -58,7 +56,7 @@ const CONFIG = {
         yesMidMin: 0.70,
         yesMidMax: 0.80,
         maxAsk: Number(process.env.YES_EARLY_FAV_MAX_ASK || 0.82),
-        quality: 'A_EARLY_FAVOURITE_CONTINUATION',
+        quality: 'A_YES_EARLY_FAVOURITE_CONTINUATION',
       },
       {
         id: 'YES_EARLY_PULLBACK_60_70',
@@ -70,8 +68,34 @@ const CONFIG = {
         yesMidMax: 0.70,
         trend5Min: -0.05,
         trend5Max: -0.02,
-        maxAsk: Number(process.env.YES_EARLY_PULLBACK_MAX_ASK || 0.72),
-        quality: 'A_EARLY_PULLBACK_INSIDE_DOMINANCE',
+        maxAsk: Number(process.env.YES_EARLY_PULLBACK_MAX_ASK || 0.67),
+        quality: 'A_YES_EARLY_PULLBACK_CHEAP',
+      },
+      {
+        id: 'NO_90_110_CONFIRMED_DRIFT',
+        enabled: String(process.env.ENABLE_NO_90_110_CONFIRMED_DRIFT || 'true').toLowerCase() === 'true',
+        side: 'NO',
+        elapsedMin: 96,
+        elapsedMax: 110,
+        yesMidMin: 0.30,
+        yesMidMax: 0.40,
+        trend5Min: -0.02,
+        trend5Max: -0.005,
+        trend15Min: -0.12,
+        trend15Max: -0.05,
+        maxAsk: Number(process.env.NO_90_110_CONFIRMED_MAX_ASK || 0.68),
+        quality: 'A_NO_90_110_CONFIRMED_DRIFT',
+      },
+      {
+        id: 'NO_EARLY_CRUSH_PERSIST_50_60',
+        enabled: String(process.env.ENABLE_NO_EARLY_CRUSH_PERSIST_50_60 || 'true').toLowerCase() === 'true',
+        side: 'NO',
+        elapsedMin: 50,
+        elapsedMax: 60,
+        yesMidMin: 0.10,
+        yesMidMax: 0.20,
+        maxAsk: Number(process.env.NO_EARLY_CRUSH_MAX_ASK || 0.85),
+        quality: 'A_NO_EARLY_CRUSH_PERSISTENCE',
       },
       {
         id: 'NO_MIDGAME_WEAK_YES_DOWNTREND',
@@ -84,20 +108,7 @@ const CONFIG = {
         trend15Min: -0.08,
         trend15Max: -0.03,
         maxAsk: Number(process.env.NO_MIDGAME_WEAK_MAX_ASK || 0.78),
-        quality: 'A_NO_TREND_CONFIRMATION',
-      },
-      {
-        id: 'NO_90_120_WEAK_DRIFT',
-        enabled: String(process.env.ENABLE_NO_90_120_WEAK_DRIFT || 'true').toLowerCase() === 'true',
-        side: 'NO',
-        elapsedMin: 91,
-        elapsedMax: 120,
-        yesMidMin: 0.30,
-        yesMidMax: 0.40,
-        trend5Min: -0.02,
-        trend5Max: -0.005,
-        maxAsk: Number(process.env.NO_90_120_WEAK_MAX_ASK || 0.68),
-        quality: 'B_NO_CONTROLLED_DRIFT',
+        quality: 'A_NO_MIDGAME_TREND_CONFIRMATION',
       },
       {
         id: 'YES_LATE_SOFT_FAV_55_60',
@@ -108,22 +119,11 @@ const CONFIG = {
         yesMidMin: 0.55,
         yesMidMax: 0.60,
         maxAsk: Number(process.env.YES_LATE_SOFT_FAV_MAX_ASK || 0.62),
-        quality: 'B_LATE_SOFT_FAVOURITE',
-      },
-      {
-        id: 'NO_EARLY_CRUSH_10_20',
-        enabled: String(process.env.ENABLE_NO_EARLY_CRUSH_10_20 || 'true').toLowerCase() === 'true',
-        side: 'NO',
-        elapsedMin: 31,
-        elapsedMax: 60,
-        yesMidMin: 0.10,
-        yesMidMax: 0.20,
-        maxAsk: Number(process.env.NO_EARLY_CRUSH_MAX_ASK || 0.86),
-        quality: 'B_EARLY_NO_CRUSH',
+        quality: 'B_YES_LATE_SOFT_FAVOURITE',
       },
     ],
   },
-
+  
   EXIT: {
     // Off by default because the tested patterns were entry-to-settlement.
     enabled: String(process.env.EXIT_ENABLED || 'false').toLowerCase() === 'true',
