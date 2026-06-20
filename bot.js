@@ -6,16 +6,15 @@ const path = require('path');
 const http = require('http');
 
 // ============================================================
-// BTC 5m Polymarket PAPER BOT — Empirical Pattern Strategy
-// Single-file version to keep your repo simple/private.
+// BTC 5m Polymarket PAPER BOT — Confirmed Direction V3
+// Single-file paper trader.
 //
-// Strategy from the price-log analysis:
+// V3 from the full 492k price-log interaction analysis:
 // - BTC 5m binary markets only
 // - One trade per market
-// - Old FIRST_TOUCH_34 logic removed
-// - Uses time × YES mid × recent trend interaction rules
-// - Default test mode holds to inferred settlement
-// - Old exit layer is OFF by default
+// - Uses time × YES mid × 5s/15s trend interaction rules
+// - Holds to inferred settlement by default
+// - Exit layer remains OFF by default for clean entry-to-settlement testing
 // ============================================================
 
 const colors = {
@@ -123,7 +122,6 @@ const CONFIG = {
       },
     ],
   },
-  
   EXIT: {
     // Off by default because the tested patterns were entry-to-settlement.
     enabled: String(process.env.EXIT_ENABLED || 'false').toLowerCase() === 'true',
@@ -955,11 +953,11 @@ http.createServer((req, res) => {
 // MAIN LOOP
 // ----------------------------
 async function run() {
-  console.log(`${colors.magenta}Booting BTC 5m empirical-pattern PAPER BOT...${colors.reset}`);
+  console.log(`${colors.magenta}Booting BTC 5m Confirmed Direction V3 PAPER BOT...${colors.reset}`);
   console.log(`${colors.gray}No PRIVATE_KEY required. This file does paper trading only.${colors.reset}`);
 
   console.log(
-    `${colors.gray}Strategy: empirical pattern rules ON | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid} | rules=${CONFIG.STRATEGY.rules.filter(r => r.enabled).map(r => r.id).join(',')}.${colors.reset}`
+    `${colors.gray}Strategy: Confirmed Direction V3 rules ON | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid} | rules=${CONFIG.STRATEGY.rules.filter(r => r.enabled).map(r => r.id).join(',')}.${colors.reset}`
   );
 
   console.log(
