@@ -124,7 +124,9 @@ const CONFIG = {
   PAPER: {
     startingBalance: Number(process.env.STARTING_BALANCE || 10),
     stakeUsd: Number(process.env.STAKE_USD || 1),
+    minStakeUsd: Number(process.env.MIN_STAKE_USD || 1),
     feeBps: Number(process.env.FEE_BPS || 0),
+    reserveStakeOnEntry: String(process.env.RESERVE_STAKE_ON_ENTRY || 'true').toLowerCase() === 'true',
   },
 
   SERVER: {
@@ -193,6 +195,7 @@ function emptyTrade() {
     entryPrice: 0,
     shares: 0,
     entryCost: 0,
+    entryFee: 0,
     entryTime: 0,
     entryElapsedSec: 0,
     quality: null,
@@ -810,8 +813,39 @@ function evaluateLatentStateStrategy() {
 function executePaperEntry(signal) {
   if (!signal || currentMarket.hasTraded || trade.active) return;
 
-  const shares = CONFIG.PAPER.stakeUsd / signal.price;
+  const requestedStake = Number(CONFIG.PAPER.stakeUsd);
+  const available = Number(stats.currentBalance);
+
+  if (!Number.isFinite(available) || available <= 0) {
+    console.log(`${colors.red}[BANKROLL] No paper balance left. Skipping entry.${colors.reset}`);
+    return;
+  }
+
+  const stakeUsd = Math.min(requestedStake, available);
+
+  if (stakeUsd < CONFIG.PAPER.minStakeUsd) {
+    console.log(
+      `${colors.yellow}[BANKROLL] Balance $${available.toFixed(2)} is below min stake $${CONFIG.PAPER.minStakeUsd.toFixed(2)}. Skipping entry.${colors.reset}`
+    );
+    return;
+  }
+
+  const shares = stakeUsd / signal.price;
   const entryCost = signal.price * shares;
+  const entryFee = entryCost * (CONFIG.PAPER.feeBps / 10000);
+  const totalDebit = CONFIG.PAPER.reserveStakeOnEntry ? entryCost + entryFee : 0;
+
+  if (CONFIG.PAPER.reserveStakeOnEntry && stats.currentBalance < totalDebit) {
+    console.log(
+      `${colors.yellow}[BANKROLL] Insufficient balance for entry. Need $${totalDebit.toFixed(2)}, have $${stats.currentBalance.toFixed(2)}.${colors.reset}`
+    );
+    return;
+  }
+
+  if (CONFIG.PAPER.reserveStakeOnEntry) {
+    stats.currentBalance -= totalDebit;
+    if (stats.currentBalance < 0 && stats.currentBalance > -1e-9) stats.currentBalance = 0;
+  }
 
   trade = {
     active: true,
@@ -822,6 +856,7 @@ function executePaperEntry(signal) {
     entryPrice: signal.price,
     shares,
     entryCost,
+    entryFee,
     entryTime: signal.timestamp,
     entryElapsedSec: signal.elapsedSec,
     quality: signal.quality,
@@ -834,7 +869,7 @@ function executePaperEntry(signal) {
   currentMarket.hasTraded = true;
 
   console.log(
-    `\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.reason} | elapsed=${trade.entryElapsedSec}s | ${trade.quality}${colors.reset}`
+    `\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | stake=$${entryCost.toFixed(2)} | reserved=${CONFIG.PAPER.reserveStakeOnEntry} | bal=$${stats.currentBalance.toFixed(2)} | ${trade.reason} | elapsed=${trade.entryElapsedSec}s | ${trade.quality}${colors.reset}`
   );
 
   const winRate = stats.totalTrades > 0 ? ((stats.wins / stats.totalTrades) * 100).toFixed(1) : '0.0';
@@ -1151,6 +1186,9 @@ async function run() {
     `${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid} | conservativeOnly=${CONFIG.STRATEGY.conservativeOnly} | states=${CONFIG.STRATEGY.states.filter(r => r.enabled).map(r => r.id).join(',')}.${colors.reset}`
   );
 
+  console.log(
+    `${colors.gray}Paper bankroll: start=$${CONFIG.PAPER.startingBalance} | stake=$${CONFIG.PAPER.stakeUsd} | minStake=$${CONFIG.PAPER.minStakeUsd} | reserveOnEntry=${CONFIG.PAPER.reserveStakeOnEntry}.${colors.reset}`
+  );
   console.log(
     `${colors.gray}Exit layer: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | kill180BelowEntry=${CONFIG.EXIT.killAt180IfBidBelowEntry} | kill240Bid<${CONFIG.EXIT.killAt240IfBidBelow} | confirmations 180>=${CONFIG.EXIT.confirmAt180Bid}, 210>=${CONFIG.EXIT.confirmAt210Bid}, 240>=${CONFIG.EXIT.confirmAt240Bid}+flat30.${colors.reset}`
   );
