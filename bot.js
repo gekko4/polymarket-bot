@@ -122,7 +122,7 @@ const CONFIG = {
   },
 
   PAPER: {
-    startingBalance: Number(process.env.STARTING_BALANCE || 100),
+    startingBalance: Number(process.env.STARTING_BALANCE || 10),
     stakeUsd: Number(process.env.STAKE_USD || 1),
     feeBps: Number(process.env.FEE_BPS || 0),
   },
