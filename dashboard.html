@@ -3,558 +3,267 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-  <title>PolyBot Terminal</title>
-
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
+  <title>PolyBot Paper Terminal</title>
   <style>
     :root {
-      --bg-base: #07080a;
-
-      --glass-bg: rgba(18, 20, 28, 0.58);
-      --glass-border: rgba(255, 255, 255, 0.08);
-      --glass-light: rgba(255, 255, 255, 0.12);
-
-      --text-main: #f8fafc;
-      --text-muted: #8b95a5;
-
-      --gold-light: #FDE047;
-      --gold-mid: #D97706;
-
-      --btc-orange: #f7931a;
-      --btc-glow: rgba(247, 147, 26, 0.40);
-
-      --poly-blue: #00e5ff;
-      --poly-glow: rgba(0, 229, 255, 0.40);
-
+      --bg: #07080a;
+      --card: rgba(18, 20, 28, 0.72);
+      --border: rgba(255,255,255,0.10);
+      --text: #f8fafc;
+      --muted: #8b95a5;
       --green: #00e676;
       --red: #ff3b30;
-
-      --radius-lg: 24px;
-      --radius-md: 16px;
-
-      --font-family: 'Space Grotesk', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --blue: #00e5ff;
+      --orange: #f7931a;
+      --gold: #facc15;
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       min-height: 100vh;
-      color: var(--text-main);
-      font-family: var(--font-family);
-      background-color: var(--bg-base);
-      background-image:
-        radial-gradient(circle at 15% 0%, var(--poly-glow) 0%, transparent 40%),
-        radial-gradient(circle at 85% 100%, var(--btc-glow) 0%, transparent 40%);
-      background-attachment: fixed;
-      padding: 24px 16px 40px;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(0,229,255,0.25), transparent 40%),
+        radial-gradient(circle at 90% 100%, rgba(247,147,26,0.25), transparent 40%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      padding: 20px;
       display: flex;
       justify-content: center;
     }
 
     .app {
       width: 100%;
-      max-width: 420px;
+      max-width: 460px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 16px;
     }
 
-    .glass-card {
-      background: var(--glass-bg);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid var(--glass-border);
-      border-top: 1px solid var(--glass-light);
-      border-radius: var(--radius-lg);
-      box-shadow:
-        0 16px 32px rgba(0, 0, 0, 0.60),
-        inset 0 1px 0 rgba(255, 255, 255, 0.02);
-      padding: 22px;
-      position: relative;
-    }
-
-    .section-header {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      margin-bottom: 16px;
-      font-weight: 700;
-    }
-
-    /* TOP NAV */
     .top {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      padding: 0 4px;
+      align-items: center;
+      padding: 4px 2px;
     }
 
     .brand {
-      font-size: 1.3rem;
       font-weight: 800;
-      letter-spacing: 0.10em;
-      background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold-mid) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      text-shadow: 0 4px 12px rgba(217, 119, 6, 0.30);
+      letter-spacing: 0.12em;
+      color: var(--gold);
     }
 
-    .status-pill {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
+    .pill {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(0, 0, 0, 0.40);
-      border: 1px solid var(--glass-border);
-      font-size: 0.75rem;
-      font-weight: 700;
+      color: var(--muted);
+      font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
     }
 
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      transition: all 0.3s ease;
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
     }
 
-    .dot.on {
-      background: var(--green);
-      box-shadow: 0 0 10px var(--green);
+    .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      margin-bottom: 8px;
     }
 
-    .dot.warn {
-      background: var(--gold-light);
-      box-shadow: 0 0 10px rgba(253, 224, 71, 0.7);
-    }
-
-    /* HERO BALANCE */
-    .hero {
-      text-align: center;
-      padding: 32px 20px 24px;
-      overflow: hidden;
-    }
-
-    .hero::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 20%;
-      right: 20%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--gold-mid), transparent);
-      opacity: 0.60;
-    }
-
-    .balance {
-      font-size: 3.45rem;
+    .equity {
+      font-size: 44px;
       font-weight: 800;
-      letter-spacing: -0.045em;
-      background: linear-gradient(180deg, #fff 0%, #a0aabf 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 10px;
-      line-height: 1;
+      letter-spacing: -0.04em;
+      margin-bottom: 12px;
     }
 
-    .sub-equity {
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      color: var(--text-muted);
-      font-size: 0.74rem;
-      margin-bottom: 22px;
-      font-weight: 600;
-    }
-
-    .sub-equity span {
-      padding: 4px 8px;
-      border-radius: 999px;
-      background: rgba(0, 0, 0, 0.24);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-    }
-
-    .stats-grid {
+    .grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 8px;
+    }
+
+    .box {
+      background: rgba(0,0,0,0.24);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
       padding: 12px;
-      border-radius: var(--radius-md);
-      transition: all 0.4s ease;
-      border: 1px solid var(--glass-border);
-      background: rgba(0, 0, 0, 0.20);
     }
 
-    .stats-grid.positive {
-      background: rgba(0, 230, 118, 0.08);
-      border-color: rgba(0, 230, 118, 0.20);
-      box-shadow: inset 0 0 20px rgba(0, 230, 118, 0.05);
-    }
-
-    .stats-grid.negative {
-      background: rgba(255, 59, 48, 0.08);
-      border-color: rgba(255, 59, 48, 0.20);
-      box-shadow: inset 0 0 20px rgba(255, 59, 48, 0.05);
-    }
-
-    .stat {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .stat-label {
-      font-size: 0.65rem;
-      color: var(--text-muted);
-      letter-spacing: 0.10em;
+    .box .k {
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
+      margin-bottom: 4px;
     }
 
-    .stat-val {
-      font-size: 0.95rem;
+    .box .v {
+      font-size: 15px;
       font-weight: 700;
-      color: var(--text-main);
-    }
-
-    /* MARKET CARD */
-    .market-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      gap: 12px;
     }
 
     .market-title {
-      font-size: 1.08rem;
+      color: var(--blue);
+      font-size: 16px;
       font-weight: 700;
-      color: var(--poly-blue);
-      text-shadow: 0 0 10px rgba(0, 229, 255, 0.30);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      flex: 1;
-      min-width: 0;
+      margin-bottom: 12px;
     }
 
-    .timer-badge {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(0, 0, 0, 0.40);
-      border: 1px solid var(--glass-border);
-      padding: 4px 10px 4px 6px;
-      border-radius: 999px;
-      flex-shrink: 0;
-    }
-
-    .time-left {
-      font-size: 0.80rem;
-      font-weight: 700;
-      color: #fff;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .svg-ring {
-      width: 18px;
-      height: 18px;
-    }
-
-    .svg-ring-bg {
-      fill: none;
-      stroke: rgba(255, 255, 255, 0.10);
-      stroke-width: 3;
-    }
-
-    .svg-ring-fill {
-      fill: none;
-      stroke: var(--gold-mid);
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-dasharray: 100, 100;
-      transition: stroke-dasharray 1s linear, stroke 0.3s;
-      transform: rotate(-90deg);
-      transform-origin: 50% 50%;
-    }
-
-    .price-grid {
+    .prices {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 16px;
+      gap: 10px;
+      margin-bottom: 12px;
     }
 
-    .price-box {
-      background: rgba(0, 0, 0, 0.30);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      padding: 16px;
-      border-radius: var(--radius-md);
+    .price {
       text-align: center;
-      transition: all 0.3s;
+      background: rgba(0,0,0,0.28);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      padding: 14px;
     }
 
-    .price-box.active-yes {
-      border-color: var(--poly-blue);
-      background: rgba(0, 229, 255, 0.05);
-      box-shadow: 0 0 18px rgba(0, 229, 255, 0.10);
-    }
-
-    .price-box.active-no {
-      border-color: var(--btc-orange);
-      background: rgba(247, 147, 26, 0.05);
-      box-shadow: 0 0 18px rgba(247, 147, 26, 0.10);
-    }
-
-    .price-label {
-      font-size: 0.70rem;
-      color: var(--text-muted);
-      letter-spacing: 0.15em;
-      margin-bottom: 8px;
+    .price .name {
+      color: var(--muted);
+      font-size: 11px;
       text-transform: uppercase;
+      margin-bottom: 6px;
     }
 
-    .price-val {
-      font-size: 1.60rem;
+    .price .num {
+      font-size: 28px;
       font-weight: 800;
     }
 
-    .val-yes {
-      color: var(--poly-blue);
-      text-shadow: 0 0 12px var(--poly-glow);
+    .yes { color: var(--blue); }
+    .no { color: var(--orange); }
+    .green { color: var(--green); }
+    .red { color: var(--red); }
+
+    .position {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
     }
 
-    .val-no {
-      color: var(--btc-orange);
-      text-shadow: 0 0 12px var(--btc-glow);
-    }
-
-    .position-bar {
-      display: flex;
-      flex-direction: column;
-      gap: 7px;
-      background: rgba(0, 0, 0, 0.22);
-      padding: 12px 16px;
-      border-radius: var(--radius-md);
-      border: 1px solid rgba(255, 255, 255, 0.03);
-    }
-
-    .pos-top {
+    .history .row {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      gap: 8px;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
     }
 
-    .pos-label {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.10em;
-      flex-shrink: 0;
-    }
+    .history .row:last-child { border-bottom: 0; }
 
-    .pos-details {
-      font-size: 0.85rem;
-      font-weight: 700;
-      text-align: right;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    .pos-details.active {
-      color: var(--gold-light);
-    }
-
-    .path-line {
-      color: var(--text-muted);
-      font-size: 0.72rem;
-      line-height: 1.35;
-      display: flex;
-      justify-content: space-between;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-
-    .path-line span {
-      opacity: 0.92;
-    }
-
-    /* HISTORY */
-    .history-card {
-      padding-bottom: 12px;
-    }
-
-    .trade {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      gap: 12px;
-    }
-
-    .trade:last-child {
-      border-bottom: none;
-    }
-
-    .trade-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      overflow: hidden;
-      min-width: 0;
-    }
-
-    .trade-title {
-      font-size: 0.85rem;
+    .h-title {
+      font-size: 13px;
       font-weight: 700;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      max-width: 280px;
     }
 
-    .trade-meta {
-      font-size: 0.75rem;
-      color: var(--text-muted);
+    .h-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
     }
 
-    .trade-pnl {
-      font-size: 1rem;
+    .pnl {
       font-weight: 800;
+      min-width: 70px;
       text-align: right;
-      flex-shrink: 0;
-    }
-
-    .trade-pnl.green {
-      color: var(--green);
-    }
-
-    .trade-pnl.red {
-      color: var(--red);
-    }
-
-    .empty {
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      padding: 20px 0;
     }
   </style>
 </head>
 
 <body>
   <main class="app">
-
     <header class="top">
       <div class="brand">POLYBOT</div>
-      <div class="status-pill">
-        <span id="pulse" class="dot"></span>
-        <span id="status">Syncing</span>
-      </div>
+      <div class="pill" id="status">Syncing</div>
     </header>
 
-    <section class="glass-card hero">
-      <div class="section-header">Paper Equity</div>
-      <div id="balance" class="balance">$0.00</div>
+    <section class="card">
+      <div class="label">Paper Equity</div>
+      <div class="equity" id="equity">$0.00</div>
 
-      <div class="sub-equity">
-        <span id="cashMini">Cash $0.00</span>
-        <span id="openMini">Open $0.00</span>
-        <span id="realisedMini">Realised $0.00</span>
-      </div>
-
-      <div id="statsGrid" class="stats-grid">
-        <div class="stat">
-          <span class="stat-label">ROI</span>
-          <span id="roi" class="stat-val">0.00%</span>
+      <div class="grid">
+        <div class="box">
+          <div class="k">Cash</div>
+          <div class="v" id="cash">$0.00</div>
         </div>
-
-        <div class="stat" style="text-align: center;">
-          <span class="stat-label">WIN %</span>
-          <span id="winrate" class="stat-val">0.0%</span>
+        <div class="box">
+          <div class="k">Open</div>
+          <div class="v" id="openValue">$0.00</div>
         </div>
-
-        <div class="stat" style="text-align: right;">
-          <span class="stat-label">W/L/U</span>
-          <span id="wlu" class="stat-val">0/0/0</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="glass-card">
-      <div class="section-header">Live Market Data</div>
-
-      <div class="market-header">
-        <div id="marketTitle" class="market-title">Scanning...</div>
-
-        <div class="timer-badge">
-          <svg class="svg-ring" viewBox="0 0 36 36">
-            <path class="svg-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-            <path id="timeRing" class="svg-ring-fill" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-          </svg>
-          <div class="time-left" id="left">--:--</div>
+        <div class="box">
+          <div class="k">ROI</div>
+          <div class="v" id="roi">0.00%</div>
         </div>
       </div>
 
-      <div class="price-grid">
-        <div id="boxYes" class="price-box">
-          <div class="price-label">YES ASK</div>
-          <div id="yes" class="price-val val-yes">—</div>
+      <div class="grid" style="margin-top:8px;">
+        <div class="box">
+          <div class="k">Win %</div>
+          <div class="v" id="winrate">0.0%</div>
         </div>
-
-        <div id="boxNo" class="price-box">
-          <div class="price-label">NO ASK</div>
-          <div id="no" class="price-val val-no">—</div>
+        <div class="box">
+          <div class="k">W/L/U</div>
+          <div class="v" id="wlu">0/0/0</div>
         </div>
-      </div>
-
-      <div class="position-bar">
-        <div class="pos-top">
-          <div class="pos-label">Order Status</div>
-          <div id="posDetails" class="pos-details">Waiting for setup</div>
-        </div>
-
-        <div class="path-line">
-          <span id="midVal">MID —</span>
-          <span id="d10Val">D10 —</span>
-          <span id="d30Val">D30 —</span>
-          <span id="rngVal">RNG —</span>
+        <div class="box">
+          <div class="k">Realised</div>
+          <div class="v" id="realised">$0.00</div>
         </div>
       </div>
     </section>
 
-    <section class="glass-card history-card">
-      <div class="section-header">Recent Activity</div>
-      <div id="history">
-        <div class="empty">No settled trades yet.</div>
+    <section class="card">
+      <div class="label">Live Market</div>
+      <div class="market-title" id="marketTitle">Scanning...</div>
+
+      <div class="prices">
+        <div class="price">
+          <div class="name">YES Ask</div>
+          <div class="num yes" id="yes">—</div>
+        </div>
+        <div class="price">
+          <div class="name">NO Ask</div>
+          <div class="num no" id="no">—</div>
+        </div>
       </div>
+
+      <div class="position" id="position">Waiting for setup...</div>
     </section>
 
+    <section class="card history">
+      <div class="label">Recent Trades</div>
+      <div id="history">No settled trades yet.</div>
+    </section>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
-    function cents(x) {
-      const n = Number(x);
-      if (!Number.isFinite(n) || n <= 0) return '—';
-      return Math.round(n * 100) + '¢';
-    }
 
     function money(x) {
       const n = Number(x);
@@ -564,36 +273,27 @@
       });
     }
 
-    function signedMoney(x) {
+    function cents(x) {
       const n = Number(x);
-      if (!Number.isFinite(n)) return '$0.00';
-      return (n >= 0 ? '+' : '-') + '$' + Math.abs(n).toFixed(2);
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      return Math.round(n * 100) + '¢';
     }
 
-    function signedPct(x) {
+    function pct(x) {
       const n = Number(x);
       if (!Number.isFinite(n)) return '0.00%';
       return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
     }
 
-    function clock(sec) {
-      const n = Number(sec);
-      if (!Number.isFinite(n) || n < 0) return '0:00';
-      const m = Math.floor(n / 60);
-      const s = Math.floor(n % 60);
-      return m + ':' + String(s).padStart(2, '0');
-    }
-
-    function compactNum(x) {
+    function signedMoney(x) {
       const n = Number(x);
-      if (!Number.isFinite(n)) return '—';
-      return n.toFixed(3);
+      if (!Number.isFinite(n)) return '$0.00';
+      return `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(2)}`;
     }
 
-    function formatTitle(title) {
-      if (!title) return 'Scanning Markets...';
-
-      return String(title)
+    function title(t) {
+      if (!t) return 'Scanning...';
+      return String(t)
         .replace(/Bitcoin/gi, 'BTC')
         .replace(/price/gi, '')
         .replace(/above/gi, '>')
@@ -603,34 +303,22 @@
         .trim();
     }
 
-    function formatReason(reason) {
-      if (!reason) return 'Settlement';
-
-      return String(reason)
-        .replaceAll('_', ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
     function renderHistory(items) {
-      const container = $('history');
-
       if (!items || !items.length) {
-        container.innerHTML = '<div class="empty">No settled trades yet.</div>';
+        $('history').textContent = 'No settled trades yet.';
         return;
       }
 
-      container.innerHTML = items.slice(0, 3).map((t) => {
+      $('history').innerHTML = items.slice(0, 5).map((t) => {
         const pnl = Number(t.pnl || 0);
         const cls = pnl >= 0 ? 'green' : 'red';
-
         return `
-          <div class="trade">
-            <div class="trade-info">
-              <div class="trade-title">${formatReason(t.reason)}</div>
-              <div class="trade-meta">${cents(t.entry)} → ${cents(t.exit)}</div>
+          <div class="row">
+            <div>
+              <div class="h-title">${String(t.reason || 'Trade').replaceAll('_', ' ')}</div>
+              <div class="h-meta">${cents(t.entry)} → ${cents(t.exit)}</div>
             </div>
-            <div class="trade-pnl ${cls}">${signedMoney(pnl)}</div>
+            <div class="pnl ${cls}">${signedMoney(pnl)}</div>
           </div>
         `;
       }).join('');
@@ -650,9 +338,9 @@
         const equity = Number(stats.currentBalance || 0);
         const cash = Number(stats.cashBalance || 0);
         const openValue = Number(stats.openPositionValue || 0);
+        const start = Number(stats.startingBalance || 0);
         const realised = Number(stats.realisedPnl || 0);
 
-        const start = Number(stats.startingBalance || 0);
         const total = Number(stats.totalTrades || 0);
         const wins = Number(stats.wins || 0);
         const losses = Number(stats.losses || 0);
@@ -661,60 +349,38 @@
         const roi = start ? ((equity - start) / start) * 100 : 0;
         const wr = total ? (wins / total) * 100 : 0;
 
-        $('balance').textContent = money(equity);
-        $('cashMini').textContent = `Cash ${money(cash)}`;
-        $('openMini').textContent = `Open ${money(openValue)}`;
-        $('realisedMini').textContent = `Realised ${signedMoney(realised)}`;
-
-        $('roi').textContent = signedPct(roi);
+        $('equity').textContent = money(equity);
+        $('cash').textContent = money(cash);
+        $('openValue').textContent = money(openValue);
+        $('roi').textContent = pct(roi);
         $('winrate').textContent = `${wr.toFixed(1)}%`;
         $('wlu').textContent = `${wins}/${losses}/${unresolved}`;
+        $('realised').textContent = signedMoney(realised);
 
-        if (roi > 0) $('statsGrid').className = 'stats-grid positive';
-        else if (roi < 0) $('statsGrid').className = 'stats-grid negative';
-        else $('statsGrid').className = 'stats-grid';
-
-        $('marketTitle').textContent = formatTitle(market.title);
-        $('left').textContent = clock(market.secondsLeft);
-
-        const elapsed = Number(market.elapsedSec || 0);
-        const totalSecs = 300;
-        const remainingPct = Math.max(0, Math.min(100, ((totalSecs - elapsed) / totalSecs) * 100));
-
-        const ring = $('timeRing');
-        ring.style.strokeDasharray = `${remainingPct}, 100`;
-        ring.style.stroke = remainingPct < 20 ? 'var(--red)' : 'var(--gold-mid)';
-
+        $('marketTitle').textContent = title(market.title);
         $('yes').textContent = cents(prices.YES);
         $('no').textContent = cents(prices.NO);
 
-        const isYes = trade.active && String(trade.side).toUpperCase() === 'YES';
-        const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
-
-        $('boxYes').className = isYes ? 'price-box active-yes' : 'price-box';
-        $('boxNo').className = isNo ? 'price-box active-no' : 'price-box';
-
-        $('midVal').textContent = `MID ${compactNum(path.yesMid)}`;
-        $('d10Val').textContent = `D10 ${compactNum(path.d10)}`;
-        $('d30Val').textContent = `D30 ${compactNum(path.d30)}`;
-        $('rngVal').textContent = `RNG ${compactNum(path.range)}`;
-
         if (trade.active) {
-          $('pulse').className = 'dot on';
           $('status').textContent = 'Holding';
-          $('posDetails').className = 'pos-details active';
-          $('posDetails').textContent = `${trade.side || 'OPEN'} @ ${cents(trade.entryPrice)}`;
+          $('position').innerHTML = `
+            Holding <strong>${trade.side}</strong> @ ${cents(trade.entryPrice)}<br/>
+            State: ${String(trade.state || trade.quality || '').replaceAll('_', ' ')}<br/>
+            MID: ${Number(path.yesMid || 0).toFixed(3)}
+            D10: ${Number(path.d10 || 0).toFixed(3)}
+            D30: ${Number(path.d30 || 0).toFixed(3)}
+            RNG: ${Number(path.range || 0).toFixed(3)}
+          `;
         } else {
-          $('pulse').className = market.slug ? 'dot warn' : 'dot';
           $('status').textContent = market.slug ? 'Hunting' : 'Syncing';
-          $('posDetails').className = 'pos-details';
-          $('posDetails').textContent = market.slug ? 'Waiting for setup' : 'Awaiting market';
+          $('position').innerHTML = market.slug
+            ? `Waiting for setup...<br/>MID: ${Number(path.yesMid || 0).toFixed(3)} D10: ${Number(path.d10 || 0).toFixed(3)} D30: ${Number(path.d30 || 0).toFixed(3)}`
+            : 'Awaiting market';
         }
 
         renderHistory(data.recentTrades || []);
       } catch (e) {
         $('status').textContent = 'Offline';
-        $('pulse').className = 'dot';
       }
     }
 
