@@ -6,15 +6,21 @@ const path = require('path');
 const http = require('http');
 
 // ============================================================
-// BTC 5m Polymarket PAPER BOT — Confirmed Direction V3
-// Single-file paper trader.
+// BTC 5m Polymarket PAPER BOT — Surface Edge V4
 //
-// V3 from the full 492k price-log interaction analysis:
-// - BTC 5m binary markets only
-// - One trade per market
-// - Uses time × YES mid × 5s/15s trend interaction rules
-// - Holds to inferred settlement by default
-// - Exit layer remains OFF by default for clean entry-to-settlement testing
+// Scraps old YES-mid-only rules.
+// Implements price-history findings as side-normalized surfaces:
+//
+// 1. Pullback with intact structure
+// 2. Loose continuation with sufficient confirmation
+// 3. Expensive collapse persistence
+// 4. Stable dominance, flat derivative
+// 5. Midgame underpriced stable side
+// 6. Late soft favorite non-takeover
+//
+// Still paper-only.
+// Still one trade per market.
+// Dashboard API remains compatible.
 // ============================================================
 
 const colors = {
@@ -28,9 +34,6 @@ const colors = {
   gray: '\x1b[90m',
 };
 
-// ----------------------------
-// CONFIG
-// ----------------------------
 const CONFIG = {
   MARKET: {
     intervalSec: 300,
@@ -40,107 +43,151 @@ const CONFIG = {
   },
 
   STRATEGY: {
-    // Confirmed Direction V3 — based on the full 492k price-log interaction analysis.
-    maxAllowedSpread: Number(process.env.MAX_ALLOWED_SPREAD || 0.03),
-    requireBid: String(process.env.REQUIRE_BID || 'true').toLowerCase() === 'true',
+    name: 'Surface Edge V4',
     oneTradePerMarket: true,
 
-    rules: [
+    // Global liquidity guard. Individual surfaces can be stricter.
+    maxAllowedSpread: Number(process.env.MAX_ALLOWED_SPREAD || 0.05),
+    requireBid: String(process.env.REQUIRE_BID || 'true').toLowerCase() === 'true',
+
+    // If true, prints why the best near-miss failed every 10s status cycle.
+    debugSurface: String(process.env.DEBUG_SURFACE || 'false').toLowerCase() === 'true',
+
+    // Order matters. Earlier surfaces get priority if multiple match.
+    surfaces: [
       {
-        id: 'YES_EARLY_FAV_70_80',
-        enabled: String(process.env.ENABLE_YES_EARLY_FAV_70_80 || 'true').toLowerCase() === 'true',
-        side: 'YES',
-        elapsedMin: 31,
-        elapsedMax: 60,
-        yesMidMin: 0.70,
-        yesMidMax: 0.80,
-        maxAsk: Number(process.env.YES_EARLY_FAV_MAX_ASK || 0.82),
-        quality: 'A_YES_EARLY_FAVOURITE_CONTINUATION',
+        id: 'PULLBACK_INTACT_TREND',
+        enabled: envBool('ENABLE_PULLBACK_INTACT_TREND', true),
+        priority: 10,
+        quality: 'A_PULLBACK_INTACT_STRUCTURE',
+        description: 'v5 pullback, v15 intact, lead intact, tight spread',
+        elapsedMin: envNum('PULLBACK_ELAPSED_MIN', 30),
+        elapsedMax: envNum('PULLBACK_ELAPSED_MAX', 210),
+        askMin: envNum('PULLBACK_ASK_MIN', 0.60),
+        askMax: envNum('PULLBACK_ASK_MAX', 0.75),
+        spreadMax: envNum('PULLBACK_SPREAD_MAX', 0.03),
+        v5Min: envNum('PULLBACK_V5_MIN', -0.06),
+        v5Max: envNum('PULLBACK_V5_MAX', -0.01),
+        v15Min: envNum('PULLBACK_V15_MIN', 0.00),
+        leadMin: envNum('PULLBACK_LEAD_MIN', 0.15),
+        maxOppBidMinusBid: envNum('PULLBACK_MAX_OPP_BID_MINUS_BID', 0.05),
       },
+
       {
-        id: 'YES_EARLY_PULLBACK_60_70',
-        enabled: String(process.env.ENABLE_YES_EARLY_PULLBACK_60_70 || 'true').toLowerCase() === 'true',
-        side: 'YES',
-        elapsedMin: 31,
-        elapsedMax: 60,
-        yesMidMin: 0.60,
-        yesMidMax: 0.70,
-        trend5Min: -0.05,
-        trend5Max: -0.02,
-        maxAsk: Number(process.env.YES_EARLY_PULLBACK_MAX_ASK || 0.67),
-        quality: 'A_YES_EARLY_PULLBACK_CHEAP',
+        id: 'STABLE_DOMINANCE_70_80',
+        enabled: envBool('ENABLE_STABLE_DOMINANCE_70_80', true),
+        priority: 20,
+        quality: 'A_STABLE_DOMINANCE',
+        description: '0.70-0.80 side, tight spread, positive lead, flat/non-reversing derivative',
+        elapsedMin: envNum('STABLE_DOM_ELAPSED_MIN', 90),
+        elapsedMax: envNum('STABLE_DOM_ELAPSED_MAX', 180),
+        askMin: envNum('STABLE_DOM_ASK_MIN', 0.70),
+        askMax: envNum('STABLE_DOM_ASK_MAX', 0.80),
+        spreadMin: envNum('STABLE_DOM_SPREAD_MIN', 0.01),
+        spreadMax: envNum('STABLE_DOM_SPREAD_MAX', 0.02),
+        v5Min: envNum('STABLE_DOM_V5_MIN', -0.015),
+        v5Max: envNum('STABLE_DOM_V5_MAX', 0.015),
+        v15Min: envNum('STABLE_DOM_V15_MIN', -0.03),
+        v15Max: envNum('STABLE_DOM_V15_MAX', 0.03),
+        leadMin: envNum('STABLE_DOM_LEAD_MIN', 0.25),
+        leadMax: envNum('STABLE_DOM_LEAD_MAX', 0.50),
       },
+
       {
-        id: 'NO_90_110_CONFIRMED_DRIFT',
-        enabled: String(process.env.ENABLE_NO_90_110_CONFIRMED_DRIFT || 'true').toLowerCase() === 'true',
-        side: 'NO',
-        elapsedMin: 96,
-        elapsedMax: 110,
-        yesMidMin: 0.30,
-        yesMidMax: 0.40,
-        trend5Min: -0.02,
-        trend5Max: -0.005,
-        trend15Min: -0.12,
-        trend15Max: -0.05,
-        maxAsk: Number(process.env.NO_90_110_CONFIRMED_MAX_ASK || 0.68),
-        quality: 'A_NO_90_110_CONFIRMED_DRIFT',
+        id: 'MIDGAME_UNDERPRICED_STABLE',
+        enabled: envBool('ENABLE_MIDGAME_UNDERPRICED_STABLE', true),
+        priority: 30,
+        quality: 'A_MIDGAME_TIME_PRICE_MISPRICING',
+        description: 'midgame 0.50-0.60 side, slight lead, flat derivative, tight spread',
+        elapsedMin: envNum('MID_UNDER_ELAPSED_MIN', 180),
+        elapsedMax: envNum('MID_UNDER_ELAPSED_MAX', 210),
+        askMin: envNum('MID_UNDER_ASK_MIN', 0.50),
+        askMax: envNum('MID_UNDER_ASK_MAX', 0.60),
+        spreadMin: envNum('MID_UNDER_SPREAD_MIN', 0.01),
+        spreadMax: envNum('MID_UNDER_SPREAD_MAX', 0.02),
+        v5Min: envNum('MID_UNDER_V5_MIN', -0.015),
+        v5Max: envNum('MID_UNDER_V5_MAX', 0.015),
+        v15Min: envNum('MID_UNDER_V15_MIN', -0.03),
+        v15Max: envNum('MID_UNDER_V15_MAX', 0.03),
+        leadMin: envNum('MID_UNDER_LEAD_MIN', 0.10),
+        leadMax: envNum('MID_UNDER_LEAD_MAX', 0.25),
       },
+
       {
-        id: 'NO_EARLY_CRUSH_PERSIST_50_60',
-        enabled: String(process.env.ENABLE_NO_EARLY_CRUSH_PERSIST_50_60 || 'true').toLowerCase() === 'true',
-        side: 'NO',
-        elapsedMin: 50,
-        elapsedMax: 60,
-        yesMidMin: 0.10,
-        yesMidMax: 0.20,
-        maxAsk: Number(process.env.NO_EARLY_CRUSH_MAX_ASK || 0.85),
-        quality: 'A_NO_EARLY_CRUSH_PERSISTENCE',
+        id: 'LOOSE_CONTINUATION',
+        enabled: envBool('ENABLE_LOOSE_CONTINUATION', true),
+        priority: 40,
+        quality: 'A_LOOSE_CONTINUATION',
+        description: 'side already moving, enough lead, not over-confirmed',
+        elapsedMin: envNum('CONT_ELAPSED_MIN', 30),
+        elapsedMax: envNum('CONT_ELAPSED_MAX', 210),
+        askMin: envNum('CONT_ASK_MIN', 0.60),
+        askMax: envNum('CONT_ASK_MAX', 0.82),
+        spreadMax: envNum('CONT_SPREAD_MAX', 0.05),
+        v5Min: envNum('CONT_V5_MIN', 0.01),
+        v15Min: envNum('CONT_V15_MIN', 0.02),
+        leadMin: envNum('CONT_LEAD_MIN', 0.15),
       },
+
       {
-        id: 'NO_MIDGAME_WEAK_YES_DOWNTREND',
-        enabled: String(process.env.ENABLE_NO_MIDGAME_WEAK_YES_DOWNTREND || 'true').toLowerCase() === 'true',
-        side: 'NO',
-        elapsedMin: 181,
-        elapsedMax: 210,
-        yesMidMin: 0.20,
-        yesMidMax: 0.30,
-        trend15Min: -0.08,
-        trend15Max: -0.03,
-        maxAsk: Number(process.env.NO_MIDGAME_WEAK_MAX_ASK || 0.78),
-        quality: 'A_NO_MIDGAME_TREND_CONFIRMATION',
+        id: 'EXPENSIVE_COLLAPSE_PERSISTENCE',
+        enabled: envBool('ENABLE_EXPENSIVE_COLLAPSE_PERSISTENCE', true),
+        priority: 50,
+        quality: 'B_EXPENSIVE_COLLAPSE_PERSISTENCE',
+        description: 'opposite side crushed, side expensive but still positive in history',
+        elapsedMin: envNum('EXP_COLLAPSE_ELAPSED_MIN', 50),
+        elapsedMax: envNum('EXP_COLLAPSE_ELAPSED_MAX', 210),
+        askMin: envNum('EXP_COLLAPSE_ASK_MIN', 0.80),
+        askMax: envNum('EXP_COLLAPSE_ASK_MAX', 0.90),
+        spreadMax: envNum('EXP_COLLAPSE_SPREAD_MAX', 0.03),
+        oppMidMax: envNum('EXP_COLLAPSE_OPP_MID_MAX', 0.25),
+        leadMin: envNum('EXP_COLLAPSE_LEAD_MIN', 0.45),
       },
+
       {
-        id: 'YES_LATE_SOFT_FAV_55_60',
-        enabled: String(process.env.ENABLE_YES_LATE_SOFT_FAV_55_60 || 'true').toLowerCase() === 'true',
-        side: 'YES',
-        elapsedMin: 211,
-        elapsedMax: 240,
-        yesMidMin: 0.55,
-        yesMidMax: 0.60,
-        maxAsk: Number(process.env.YES_LATE_SOFT_FAV_MAX_ASK || 0.62),
-        quality: 'B_YES_LATE_SOFT_FAVOURITE',
+        id: 'LATE_SOFT_FAV_NON_TAKEOVER',
+        enabled: envBool('ENABLE_LATE_SOFT_FAV_NON_TAKEOVER', true),
+        priority: 60,
+        quality: 'B_LATE_SOFT_FAV_NON_TAKEOVER',
+        description: 'late 0.55-0.65 side where opposite side has not taken over',
+        elapsedMin: envNum('LATE_SOFT_ELAPSED_MIN', 210),
+        elapsedMax: envNum('LATE_SOFT_ELAPSED_MAX', 240),
+        askMin: envNum('LATE_SOFT_ASK_MIN', 0.55),
+        askMax: envNum('LATE_SOFT_ASK_MAX', 0.65),
+        spreadMax: envNum('LATE_SOFT_SPREAD_MAX', 0.03),
+        leadMin: envNum('LATE_SOFT_LEAD_MIN', 0.05),
+        oppBidMax: envNum('LATE_SOFT_OPP_BID_MAX', 0.48),
       },
     ],
+
+    // Explicit no-trade filters from the analysis.
+    guards: {
+      avoidTightMidCompression: envBool('AVOID_TIGHT_MID_COMPRESSION', true),
+      avoidBadPullbackBreakdown: envBool('AVOID_BAD_PULLBACK_BREAKDOWN', true),
+      avoidExhaustedFavorite: envBool('AVOID_EXHAUSTED_FAVORITE', true),
+      avoidReversalDanger: envBool('AVOID_REVERSAL_DANGER', true),
+    },
   },
+
   EXIT: {
-    // Off by default because the tested patterns were entry-to-settlement.
+    // Kept OFF. The tested edge is entry-to-settlement.
+    // Existing dashboard compatibility preserved.
     enabled: String(process.env.EXIT_ENABLED || 'false').toLowerCase() === 'true',
-    killAt180IfBidBelowEntry: String(process.env.KILL_180_BID_BELOW_ENTRY || 'true').toLowerCase() === 'true',
-    killAt180IfBidBelow: Number(process.env.KILL_180_BID_BELOW || 0),
-    killAt240IfBidBelow: Number(process.env.KILL_240_BID_BELOW || 0.34),
-    killAt270IfBidBelow: Number(process.env.KILL_270_BID_BELOW || 0.34),
-    confirmAt180Bid: Number(process.env.CONFIRM_180_BID || 0.85),
-    confirmAt210Bid: Number(process.env.CONFIRM_210_BID || 0.90),
-    confirmAt240Bid: Number(process.env.CONFIRM_240_BID || 0.65),
-    confirmAt240MaxMomentum30: Number(process.env.CONFIRM_240_MAX_MOM30 || 0.05),
-    requireBidForExit: String(process.env.REQUIRE_BID_FOR_EXIT || 'true').toLowerCase() === 'true',
+
+    // Optional safety-only kill. Default false because old exit logic hurt expectancy.
+    structuralKillEnabled: envBool('STRUCTURAL_KILL_ENABLED', false),
+    minHoldSec: envNum('STRUCTURAL_KILL_MIN_HOLD_SEC', 25),
+    adverseFromEntry: envNum('STRUCTURAL_KILL_ADVERSE_FROM_ENTRY', 0.14),
+    maxMfeBeforeKill: envNum('STRUCTURAL_KILL_MAX_MFE_BEFORE_KILL', 0.10),
+    v15Max: envNum('STRUCTURAL_KILL_V15_MAX', -0.08),
+    oppBidLeadMin: envNum('STRUCTURAL_KILL_OPP_BID_LEAD_MIN', 0.20),
+    confirmTicks: envNum('STRUCTURAL_KILL_CONFIRM_TICKS', 2),
   },
 
   PAPER: {
     startingBalance: Number(process.env.STARTING_BALANCE || 100),
     stakeUsd: Number(process.env.STAKE_USD || 1),
     feeBps: Number(process.env.FEE_BPS || 0),
-    assumeFillOnAskTouch: true,
   },
 
   SERVER: {
@@ -156,14 +203,25 @@ const CONFIG = {
   },
 };
 
+function envBool(name, fallback) {
+  return String(process.env[name] ?? String(fallback)).toLowerCase() === 'true';
+}
+
+function envNum(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 // ----------------------------
 // GLOBAL STATE
 // ----------------------------
+
 let wsMarket = null;
 let isSearchingNextMarket = false;
 let searchCooldownUntil = 0;
 let lastStatusPrintSec = 0;
 let lastPriceLogSec = 0;
+let lastDebugSurfaceSec = 0;
 
 let currentMarket = emptyMarket();
 let currentPrices = { YES: 0, NO: 0 };
@@ -194,8 +252,8 @@ function emptyMarket() {
       NO: { ask: null, bid: null, askSize: null, bidSize: null, spread: null },
     },
     priceTicks: [],
-    holdConfirmed: false,
-    holdConfirmReason: null,
+    killConfirmCount: 0,
+    peakHeldBid: null,
   };
 }
 
@@ -213,6 +271,7 @@ function emptyTrade() {
     entryElapsedSec: 0,
     quality: null,
     reason: null,
+    surfaceId: null,
     exitMode: 'HOLD_TO_SETTLEMENT',
     confirmedHold: false,
     confirmReason: null,
@@ -222,6 +281,7 @@ function emptyTrade() {
 // ----------------------------
 // LOGGING
 // ----------------------------
+
 const tradeStream = fs.createWriteStream(CONFIG.FILES.trades, { flags: 'a' });
 const priceStream = fs.createWriteStream(CONFIG.FILES.prices, { flags: 'a' });
 const terminalStream = fs.createWriteStream(CONFIG.FILES.terminal, { flags: 'a' });
@@ -236,7 +296,7 @@ console.log = function (...args) {
 
 if (!fs.existsSync(CONFIG.FILES.trades) || fs.statSync(CONFIG.FILES.trades).size === 0) {
   tradeStream.write(
-    'Timestamp,MarketSlug,Event,Side,EntryPrice,ExitValue,Shares,EntryElapsedSec,Quality,Reason,PnL_USD,Balance_USD,WinRate_Pct,ExitElapsedSec,ExitReason,HeldBid,Momentum30\n'
+    'Timestamp,MarketSlug,Event,Side,EntryPrice,ExitValue,Shares,EntryElapsedSec,Quality,Reason,PnL_USD,Balance_USD,WinRate_Pct,ExitElapsedSec,ExitReason,HeldBid,V15,Lead\n'
   );
 }
 
@@ -262,12 +322,12 @@ function logPriceTick() {
   };
 
   currentMarket.priceTicks.push(tick);
-  if (currentMarket.priceTicks.length > 420) currentMarket.priceTicks.shift();
+  if (currentMarket.priceTicks.length > 500) currentMarket.priceTicks.shift();
 
   priceStream.write([
     new Date().toISOString(),
     currentMarket.slug,
-    getElapsedSec(),
+    tick.elapsedSec,
     fmt(y.ask),
     fmt(y.bid),
     fmt(n.ask),
@@ -281,8 +341,9 @@ function fmt(x) {
 }
 
 // ----------------------------
-// MARKET TIME HELPERS
+// TIME HELPERS
 // ----------------------------
+
 function getElapsedSec(now = Date.now()) {
   if (!currentMarket.startTimeMs) return 0;
   return Math.max(0, Math.floor((now - currentMarket.startTimeMs) / 1000));
@@ -301,8 +362,9 @@ function getCurrentBtc5mInterval(nowMs = Date.now()) {
 }
 
 // ----------------------------
-// POLYMARKET MARKET SCANNER
+// MARKET SCANNER
 // ----------------------------
+
 async function loadCurrentMarket() {
   if (isSearchingNextMarket) return;
   isSearchingNextMarket = true;
@@ -365,23 +427,24 @@ async function loadCurrentMarket() {
 // ----------------------------
 // WEBSOCKET
 // ----------------------------
+
 function connectWebsocket() {
   if (wsMarket) {
     try { wsMarket.terminate(); } catch (_) {}
   }
 
   console.log(`${colors.yellow}[WS] Connecting market stream...${colors.reset}`);
+
   wsMarket = new WebSocket(CONFIG.MARKET.clobWsUrl);
 
   wsMarket.on('open', () => {
     if (!currentMarket.yesToken || !currentMarket.noToken) return;
 
-    const payload = {
+    wsMarket.send(JSON.stringify({
       type: 'market',
       assets_ids: [currentMarket.yesToken, currentMarket.noToken],
-    };
+    }));
 
-    wsMarket.send(JSON.stringify(payload));
     console.log(`${colors.green}[WS] Subscribed to YES/NO books.${colors.reset}`);
   });
 
@@ -393,7 +456,7 @@ function connectWebsocket() {
       const data = JSON.parse(text);
       handleWsMessage(data);
     } catch (_) {
-      // Ignore malformed heartbeat-ish messages
+      // Ignore malformed heartbeat-ish payloads.
     }
   });
 
@@ -470,8 +533,9 @@ function tokenToSide(tokenId) {
 }
 
 // ----------------------------
-// STRATEGY + PAPER BROKER
+// QUOTE / SURFACE HELPERS
 // ----------------------------
+
 function handleMarketUpdate(update) {
   if (!update || !update.side) return;
 
@@ -490,8 +554,12 @@ function handleMarketUpdate(update) {
 
   logPriceTick();
 
-  const signal = evaluatePatternStrategy();
+  const signal = evaluateSurfaceStrategy();
   if (signal) executePaperEntry(signal);
+}
+
+function otherSide(side) {
+  return side === 'YES' ? 'NO' : 'YES';
 }
 
 function getSideQuote(side) {
@@ -508,124 +576,291 @@ function getSideBid(side) {
   return q.bid == null || Number.isNaN(Number(q.bid)) ? null : Number(q.bid);
 }
 
-function getYesMidNow() {
-  const y = currentMarket.quote.YES;
-  if (!y || y.ask == null || y.bid == null) return null;
-  return (Number(y.ask) + Number(y.bid)) / 2;
+function getSideSpread(side) {
+  const q = getSideQuote(side);
+  if (q.ask == null || q.bid == null) return null;
+  return Number(q.ask) - Number(q.bid);
 }
 
-function getYesMidAtOrBefore(targetElapsedSec) {
+function getSideMid(side) {
+  const ask = getSideAsk(side);
+  const bid = getSideBid(side);
+  if (ask == null || bid == null) return null;
+  return (ask + bid) / 2;
+}
+
+function getSideMidAtOrBefore(side, targetElapsedSec) {
   if (!Array.isArray(currentMarket.priceTicks)) return null;
 
   for (let i = currentMarket.priceTicks.length - 1; i >= 0; i--) {
     const t = currentMarket.priceTicks[i];
-
-    if (t.elapsedSec <= targetElapsedSec && t.YES && t.YES.ask != null && t.YES.bid != null) {
-      return (Number(t.YES.ask) + Number(t.YES.bid)) / 2;
+    if (t.elapsedSec <= targetElapsedSec && t[side] && t[side].ask != null && t[side].bid != null) {
+      return (Number(t[side].ask) + Number(t[side].bid)) / 2;
     }
   }
 
   return null;
 }
 
-function getYesTrend(secondsBack, nowElapsedSec = getElapsedSec()) {
-  const nowMid = getYesMidNow();
-  const priorMid = getYesMidAtOrBefore(nowElapsedSec - secondsBack);
-
+function getSideTrend(side, secondsBack, nowElapsedSec = getElapsedSec()) {
+  const nowMid = getSideMid(side);
+  const priorMid = getSideMidAtOrBefore(side, nowElapsedSec - secondsBack);
   if (nowMid == null || priorMid == null) return null;
   return nowMid - priorMid;
 }
 
-function spreadOk(side) {
-  const q = getSideQuote(side);
-  if (q.spread == null || Number.isNaN(Number(q.spread))) return true;
-  return Number(q.spread) <= CONFIG.STRATEGY.maxAllowedSpread;
-}
+function getSideBidAtOrBefore(side, targetElapsedSec) {
+  if (!Array.isArray(currentMarket.priceTicks)) return null;
 
-function inRangeInclusive(value, min, max) {
-  if (value == null || Number.isNaN(Number(value))) return false;
-  return Number(value) >= min && Number(value) <= max;
-}
-
-function ruleMatches(rule, ctx) {
-  if (!rule.enabled) return false;
-
-  if (!inRangeInclusive(ctx.elapsed, rule.elapsedMin, rule.elapsedMax)) return false;
-  if (!inRangeInclusive(ctx.yesMid, rule.yesMidMin, rule.yesMidMax)) return false;
-
-  const ask = rule.side === 'YES' ? ctx.yesAsk : ctx.noAsk;
-  const bid = rule.side === 'YES' ? ctx.yesBid : ctx.noBid;
-
-  if (ask == null || ask > rule.maxAsk) return false;
-  if (!spreadOk(rule.side)) return false;
-
-  if (CONFIG.STRATEGY.requireBid && (bid == null || bid <= 0)) return false;
-
-  if (rule.trend5Min != null && !inRangeInclusive(ctx.trend5, rule.trend5Min, rule.trend5Max)) {
-    return false;
+  for (let i = currentMarket.priceTicks.length - 1; i >= 0; i--) {
+    const t = currentMarket.priceTicks[i];
+    if (t.elapsedSec <= targetElapsedSec && t[side] && t[side].bid != null) {
+      return Number(t[side].bid);
+    }
   }
 
-  if (rule.trend15Min != null && !inRangeInclusive(ctx.trend15, rule.trend15Min, rule.trend15Max)) {
+  return null;
+}
+
+function getSideContext(side) {
+  const opp = otherSide(side);
+  const elapsed = getElapsedSec();
+
+  const ask = getSideAsk(side);
+  const bid = getSideBid(side);
+  const oppAsk = getSideAsk(opp);
+  const oppBid = getSideBid(opp);
+
+  const heldMid = getSideMid(side);
+  const oppMid = getSideMid(opp);
+
+  if ([ask, bid, oppAsk, oppBid, heldMid, oppMid].some((x) => x == null)) return null;
+
+  const spread = ask - bid;
+  const oppSpread = oppAsk - oppBid;
+  const maxSpread = Math.max(spread, oppSpread);
+
+  const v5 = getSideTrend(side, 5, elapsed);
+  const v15 = getSideTrend(side, 15, elapsed);
+  const v30 = getSideTrend(side, 30, elapsed);
+
+  return {
+    side,
+    opp,
+    elapsed,
+    ask,
+    bid,
+    oppAsk,
+    oppBid,
+    heldMid,
+    oppMid,
+    spread,
+    oppSpread,
+    maxSpread,
+    lead: heldMid - oppMid,
+    bidLead: bid - oppBid,
+    v5,
+    v15,
+    v30,
+    yesMid: getSideMid('YES'),
+    noMid: getSideMid('NO'),
+  };
+}
+
+function inRange(value, min, max) {
+  if (value == null || Number.isNaN(Number(value))) return false;
+  if (min != null && Number(value) < min) return false;
+  if (max != null && Number(value) > max) return false;
+  return true;
+}
+
+function passesRange(ctx, rule, field, minKey, maxKey) {
+  const min = rule[minKey];
+  const max = rule[maxKey];
+  if (min == null && max == null) return true;
+  return inRange(ctx[field], min, max);
+}
+
+function surfaceMatches(rule, ctx) {
+  if (!rule.enabled) return false;
+
+  if (!inRange(ctx.elapsed, rule.elapsedMin, rule.elapsedMax)) return false;
+  if (!inRange(ctx.ask, rule.askMin, rule.askMax)) return false;
+
+  if (CONFIG.STRATEGY.requireBid && (!ctx.bid || ctx.bid <= 0)) return false;
+
+  if (ctx.maxSpread > CONFIG.STRATEGY.maxAllowedSpread) return false;
+
+  if (!passesRange(ctx, rule, 'spread', 'spreadMin', 'spreadMax')) return false;
+  if (!passesRange(ctx, rule, 'v5', 'v5Min', 'v5Max')) return false;
+  if (!passesRange(ctx, rule, 'v15', 'v15Min', 'v15Max')) return false;
+  if (!passesRange(ctx, rule, 'v30', 'v30Min', 'v30Max')) return false;
+  if (!passesRange(ctx, rule, 'lead', 'leadMin', 'leadMax')) return false;
+  if (!passesRange(ctx, rule, 'oppMid', 'oppMidMin', 'oppMidMax')) return false;
+  if (!passesRange(ctx, rule, 'oppBid', 'oppBidMin', 'oppBidMax')) return false;
+
+  if (rule.maxOppBidMinusBid != null && (ctx.oppBid - ctx.bid) > rule.maxOppBidMinusBid) {
     return false;
   }
 
   return true;
 }
 
-function evaluatePatternStrategy() {
-  if (!currentMarket.slug || currentMarket.hasTraded || trade.active) return null;
+function blockedByNoTradeGuard(ctx) {
+  const g = CONFIG.STRATEGY.guards;
 
-  const elapsed = getElapsedSec();
-
-  const yesAsk = getSideAsk('YES');
-  const yesBid = getSideBid('YES');
-  const noAsk = getSideAsk('NO');
-  const noBid = getSideBid('NO');
-  const yesMid = getYesMidNow();
-
-  if (yesAsk == null || yesBid == null || noAsk == null || noBid == null || yesMid == null) {
-    return null;
+  // Balanced tight compression was negative in state-level testing.
+  if (
+    g.avoidTightMidCompression &&
+    inRange(ctx.ask, 0.48, 0.58) &&
+    Math.abs(ctx.lead) <= 0.10 &&
+    ctx.spread <= 0.02 &&
+    ctx.v5 != null &&
+    Math.abs(ctx.v5) >= 0.015 &&
+    inRange(ctx.elapsed, 20, 180)
+  ) {
+    return 'GUARD_TIGHT_MID_COMPRESSION';
   }
 
-  const ctx = {
-    elapsed,
-    yesAsk,
-    yesBid,
-    noAsk,
-    noBid,
-    yesMid,
-    trend5: getYesTrend(5, elapsed),
-    trend15: getYesTrend(15, elapsed),
-  };
+  // Bad pullback: both short and medium derivatives broken.
+  if (
+    g.avoidBadPullbackBreakdown &&
+    inRange(ctx.ask, 0.60, 0.75) &&
+    ctx.v5 != null &&
+    ctx.v15 != null &&
+    ctx.v5 <= -0.02 &&
+    ctx.v15 <= -0.03 &&
+    (ctx.spread > 0.03 || ctx.oppBid > ctx.bid)
+  ) {
+    return 'GUARD_BAD_PULLBACK_BREAKDOWN';
+  }
 
-  const matches = CONFIG.STRATEGY.rules.filter((rule) => ruleMatches(rule, ctx));
+  // High favorite but current derivative is stalling.
+  if (
+    g.avoidExhaustedFavorite &&
+    inRange(ctx.elapsed, 45, 240) &&
+    inRange(ctx.ask, 0.80, 0.95) &&
+    ctx.v15 != null &&
+    ctx.v5 != null &&
+    ctx.v15 >= 0.04 &&
+    ctx.v5 <= 0 &&
+    (ctx.spread > 0.02 || ctx.oppBid >= ctx.bid - 0.20)
+  ) {
+    return 'GUARD_EXHAUSTED_FAVORITE';
+  }
 
-  if (!matches.length) return null;
+  // Favorite with negative v5/v15 and opposite bid alive.
+  if (
+    g.avoidReversalDanger &&
+    inRange(ctx.elapsed, 60, 260) &&
+    inRange(ctx.ask, 0.70, 0.95) &&
+    ctx.v5 != null &&
+    ctx.v15 != null &&
+    ctx.v5 <= -0.04 &&
+    ctx.v15 <= -0.02 &&
+    ctx.oppBid >= 0.25 &&
+    ctx.spread >= 0.02
+  ) {
+    return 'GUARD_REVERSAL_DANGER';
+  }
 
-  // If more than one setup is live, prefer the earlier rule in CONFIG.STRATEGY.rules.
-  // The order is deliberately the stricter/highest-confidence shortlist first.
-  const rule = matches[0];
+  return null;
+}
 
-  const price = rule.side === 'YES' ? yesAsk : noAsk;
-  const tokenId = rule.side === 'YES' ? currentMarket.yesToken : currentMarket.noToken;
+// ----------------------------
+// STRATEGY
+// ----------------------------
 
-  const trendBits = [];
-  if (ctx.trend5 != null) trendBits.push(`T5=${fmt(ctx.trend5)}`);
-  if (ctx.trend15 != null) trendBits.push(`T15=${fmt(ctx.trend15)}`);
+function evaluateSurfaceStrategy() {
+  if (!currentMarket.slug || currentMarket.hasTraded || trade.active) return null;
+
+  const yesCtx = getSideContext('YES');
+  const noCtx = getSideContext('NO');
+
+  if (!yesCtx || !noCtx) return null;
+
+  const candidates = [];
+
+  for (const ctx of [yesCtx, noCtx]) {
+    const guard = blockedByNoTradeGuard(ctx);
+    if (guard) {
+      maybeDebugSurface(ctx, guard);
+      continue;
+    }
+
+    for (const surface of CONFIG.STRATEGY.surfaces) {
+      if (surfaceMatches(surface, ctx)) {
+        candidates.push({
+          surface,
+          ctx,
+          score: scoreCandidate(surface, ctx),
+        });
+      }
+    }
+  }
+
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    if (a.surface.priority !== b.surface.priority) return a.surface.priority - b.surface.priority;
+    return b.score - a.score;
+  });
+
+  const best = candidates[0];
+  const { surface, ctx } = best;
+
+  const tokenId = ctx.side === 'YES' ? currentMarket.yesToken : currentMarket.noToken;
 
   return {
     type: 'BUY',
     marketSlug: currentMarket.slug,
     marketTitle: currentMarket.title,
-    side: rule.side,
+    side: ctx.side,
     tokenId,
-    price,
-    elapsedSec: elapsed,
-    quality: rule.quality,
-    reason: `${rule.id}_MID_${fmt(yesMid)}_${trendBits.join('_')}`,
+    price: ctx.ask,
+    elapsedSec: ctx.elapsed,
+    quality: surface.quality,
+    surfaceId: surface.id,
+    reason: buildReason(surface, ctx),
     timestamp: Date.now(),
   };
 }
+
+function scoreCandidate(surface, ctx) {
+  // Not an ML score. Just deterministic priority within tied surfaces.
+  const payout = 1 / ctx.ask - 1;
+  const structure = Math.max(0, ctx.lead) + Math.max(0, ctx.v15 || 0) + Math.max(0, ctx.v5 || 0);
+  const spreadPenalty = ctx.spread * 2;
+  return payout + structure - spreadPenalty - surface.priority / 1000;
+}
+
+function buildReason(surface, ctx) {
+  return [
+    surface.id,
+    `SIDE_${ctx.side}`,
+    `ASK_${fmt(ctx.ask)}`,
+    `EL_${ctx.elapsed}`,
+    `SP_${fmt(ctx.spread)}`,
+    `V5_${fmt(ctx.v5)}`,
+    `V15_${fmt(ctx.v15)}`,
+    `LEAD_${fmt(ctx.lead)}`,
+  ].join('_');
+}
+
+function maybeDebugSurface(ctx, guard) {
+  if (!CONFIG.STRATEGY.debugSurface) return;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (nowSec === lastDebugSurfaceSec) return;
+  lastDebugSurfaceSec = nowSec;
+
+  console.log(
+    `${colors.gray}[SURFACE GUARD] ${guard} ${ctx.side} ask=${fmt(ctx.ask)} spread=${fmt(ctx.spread)} v5=${fmt(ctx.v5)} v15=${fmt(ctx.v15)} lead=${fmt(ctx.lead)} elapsed=${ctx.elapsed}${colors.reset}`
+  );
+}
+
+// ----------------------------
+// PAPER BROKER
+// ----------------------------
 
 function executePaperEntry(signal) {
   if (!signal || currentMarket.hasTraded || trade.active) return;
@@ -646,15 +881,17 @@ function executePaperEntry(signal) {
     entryElapsedSec: signal.elapsedSec,
     quality: signal.quality,
     reason: signal.reason,
+    surfaceId: signal.surfaceId,
     exitMode: 'HOLD_TO_SETTLEMENT',
     confirmedHold: false,
     confirmReason: null,
   };
 
   currentMarket.hasTraded = true;
+  currentMarket.peakHeldBid = getSideBid(trade.side);
 
   console.log(
-    `\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.reason} | elapsed=${trade.entryElapsedSec}s | ${trade.quality}${colors.reset}`
+    `\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.surfaceId} | elapsed=${trade.entryElapsedSec}s | ${trade.quality}${colors.reset}`
   );
 
   const winRate = stats.totalTrades > 0 ? ((stats.wins / stats.totalTrades) * 100).toFixed(1) : '0.0';
@@ -677,56 +914,15 @@ function executePaperEntry(signal) {
     '',
     '',
     '',
+    '',
   ].join(',') + '\n');
 }
 
-function getHeldBid(side = trade.side) {
-  if (!side || !currentMarket.quote[side]) return null;
-  const b = currentMarket.quote[side].bid;
-  return b == null || Number.isNaN(Number(b)) ? null : Number(b);
-}
-
-function getHeldBidAtOrBefore(side, targetElapsedSec) {
-  if (!side || !Array.isArray(currentMarket.priceTicks)) return null;
-
-  for (let i = currentMarket.priceTicks.length - 1; i >= 0; i--) {
-    const t = currentMarket.priceTicks[i];
-
-    if (t.elapsedSec <= targetElapsedSec && t[side] && t[side].bid != null) {
-      return Number(t[side].bid);
-    }
-  }
-
-  return null;
-}
-
-function getMomentum30(side, nowElapsedSec = getElapsedSec()) {
-  const nowBid = getHeldBid(side);
-  const priorBid = getHeldBidAtOrBefore(side, nowElapsedSec - 30);
-
-  if (nowBid == null || priorBid == null) return null;
-  return nowBid - priorBid;
-}
-
-function markHoldConfirmed(reason) {
-  if (!trade.active || trade.confirmedHold) return;
-
-  trade.confirmedHold = true;
-  trade.confirmReason = reason;
-  currentMarket.holdConfirmed = true;
-  currentMarket.holdConfirmReason = reason;
-
-  console.log(
-    `${colors.green}[HOLD CONFIRMED] ${reason} | ${trade.side} bid=${fmt(getHeldBid())} | elapsed=${getElapsedSec()}s${colors.reset}`
-  );
-}
-
-function executePaperExit(reason, exitBid, momentum30 = null) {
+function executePaperExit(reason, exitBid, v15 = null, lead = null) {
   if (!trade.active) return;
   if (exitBid == null || Number.isNaN(Number(exitBid))) return;
 
   const elapsed = getElapsedSec();
-
   const grossReturn = Number(exitBid) * trade.shares;
   const entryFee = trade.entryCost * (CONFIG.PAPER.feeBps / 10000);
   const exitFee = grossReturn * (CONFIG.PAPER.feeBps / 10000);
@@ -735,7 +931,6 @@ function executePaperExit(reason, exitBid, momentum30 = null) {
   stats.totalTrades += 1;
   if (pnl > 0) stats.wins += 1;
   else stats.losses += 1;
-
   stats.currentBalance += pnl;
 
   const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
@@ -762,7 +957,8 @@ function executePaperExit(reason, exitBid, momentum30 = null) {
     elapsed,
     reason,
     fmt(exitBid),
-    momentum30 == null ? '' : fmt(momentum30),
+    v15 == null ? '' : fmt(v15),
+    lead == null ? '' : fmt(lead),
   ].join(',') + '\n');
 
   recentTrades.unshift({
@@ -780,49 +976,31 @@ function executePaperExit(reason, exitBid, momentum30 = null) {
 
 function manageOpenTrade() {
   if (!CONFIG.EXIT.enabled || !trade.active || !currentMarket.slug) return;
+  if (!CONFIG.EXIT.structuralKillEnabled) return;
 
   const elapsed = getElapsedSec();
-  const heldBid = getHeldBid();
+  if (elapsed < trade.entryElapsedSec + CONFIG.EXIT.minHoldSec) return;
 
-  if (heldBid == null) return;
+  const ctx = getSideContext(trade.side);
+  if (!ctx) return;
 
-  const momentum30 = getMomentum30(trade.side, elapsed);
+  if (currentMarket.peakHeldBid == null) currentMarket.peakHeldBid = ctx.bid;
+  currentMarket.peakHeldBid = Math.max(currentMarket.peakHeldBid, ctx.bid);
 
-  if (elapsed >= 180 && heldBid >= CONFIG.EXIT.confirmAt180Bid) {
-    markHoldConfirmed(`CONFIRM_180_BID_GE_${Math.round(CONFIG.EXIT.confirmAt180Bid * 100)}C`);
+  const mfe = currentMarket.peakHeldBid - trade.entryPrice;
+  const adverse = ctx.bid <= Math.max(0.01, trade.entryPrice - CONFIG.EXIT.adverseFromEntry);
+  const neverDeveloped = mfe <= CONFIG.EXIT.maxMfeBeforeKill;
+  const derivativeBroken = ctx.v15 != null && ctx.v15 <= CONFIG.EXIT.v15Max;
+  const oppTakingOver = (ctx.oppBid - ctx.bid) >= CONFIG.EXIT.oppBidLeadMin;
+
+  if (adverse && neverDeveloped && derivativeBroken && oppTakingOver) {
+    currentMarket.killConfirmCount += 1;
+  } else {
+    currentMarket.killConfirmCount = 0;
   }
 
-  if (elapsed >= 210 && heldBid >= CONFIG.EXIT.confirmAt210Bid) {
-    markHoldConfirmed(`CONFIRM_210_BID_GE_${Math.round(CONFIG.EXIT.confirmAt210Bid * 100)}C`);
-  }
-
-  if (
-    elapsed >= 240 &&
-    heldBid >= CONFIG.EXIT.confirmAt240Bid &&
-    momentum30 != null &&
-    momentum30 < CONFIG.EXIT.confirmAt240MaxMomentum30
-  ) {
-    markHoldConfirmed(
-      `CONFIRM_240_BID_GE_${Math.round(CONFIG.EXIT.confirmAt240Bid * 100)}C_MOM30_LT_${Math.round(CONFIG.EXIT.confirmAt240MaxMomentum30 * 100)}C`
-    );
-  }
-
-  if (trade.confirmedHold) return;
-
-  if (elapsed >= 180 && CONFIG.EXIT.killAt180IfBidBelowEntry && heldBid < trade.entryPrice) {
-    return executePaperExit('TIME_KILL_180_BID_BELOW_ENTRY', heldBid, momentum30);
-  }
-
-  if (elapsed >= 180 && CONFIG.EXIT.killAt180IfBidBelow > 0 && heldBid < CONFIG.EXIT.killAt180IfBidBelow) {
-    return executePaperExit(`TIME_KILL_180_BID_LT_${Math.round(CONFIG.EXIT.killAt180IfBidBelow * 100)}C`, heldBid, momentum30);
-  }
-
-  if (elapsed >= 240 && heldBid < CONFIG.EXIT.killAt240IfBidBelow) {
-    return executePaperExit(`TIME_KILL_240_BID_LT_${Math.round(CONFIG.EXIT.killAt240IfBidBelow * 100)}C`, heldBid, momentum30);
-  }
-
-  if (elapsed >= 270 && heldBid < CONFIG.EXIT.killAt270IfBidBelow) {
-    return executePaperExit(`TIME_KILL_270_BID_LT_${Math.round(CONFIG.EXIT.killAt270IfBidBelow * 100)}C`, heldBid, momentum30);
+  if (currentMarket.killConfirmCount >= CONFIG.EXIT.confirmTicks) {
+    executePaperExit('STRUCTURAL_INVALIDATION', ctx.bid, ctx.v15, ctx.lead);
   }
 }
 
@@ -853,7 +1031,6 @@ function settleIfNeeded() {
   stats.totalTrades += 1;
   if (pnl > 0) stats.wins += 1;
   else stats.losses += 1;
-
   stats.currentBalance += pnl;
 
   const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
@@ -884,11 +1061,12 @@ function settleIfNeeded() {
     '',
     '',
     '',
+    '',
   ].join(',') + '\n');
 
   recentTrades.unshift({
     time: new Date().toLocaleTimeString(),
-    reason: `${trade.reason} ${trade.side} ${trade.quality}`,
+    reason: `${trade.surfaceId} ${trade.side} ${trade.quality}`,
     entry: trade.entryPrice.toFixed(3),
     exit: exitValue.toFixed(3),
     pnl,
@@ -906,17 +1084,16 @@ function inferWinnerFromFinalQuotes() {
   if (yesAsk == null || noAsk == null) return null;
   if (yesAsk === noAsk) return null;
 
-  // Near settlement, the winning side usually trades near 1 and the losing side near 0.
   return yesAsk > noAsk ? 'YES' : 'NO';
 }
 
 // ----------------------------
 // DASHBOARD SERVER
 // ----------------------------
+
 http.createServer((req, res) => {
   if (req.url === '/api/live') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-
     res.end(JSON.stringify({
       stats,
       trade,
@@ -931,7 +1108,6 @@ http.createServer((req, res) => {
         exit: CONFIG.EXIT,
       },
     }));
-
     return;
   }
 
@@ -952,16 +1128,18 @@ http.createServer((req, res) => {
 // ----------------------------
 // MAIN LOOP
 // ----------------------------
+
 async function run() {
-  console.log(`${colors.magenta}Booting BTC 5m Confirmed Direction V3 PAPER BOT...${colors.reset}`);
-  console.log(`${colors.gray}No PRIVATE_KEY required. This file does paper trading only.${colors.reset}`);
-
+  console.log(`${colors.magenta}Booting BTC 5m Surface Edge V4 PAPER BOT...${colors.reset}`);
+  console.log(`${colors.gray}Paper trading only. No PRIVATE_KEY required.${colors.reset}`);
   console.log(
-    `${colors.gray}Strategy: Confirmed Direction V3 rules ON | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid} | rules=${CONFIG.STRATEGY.rules.filter(r => r.enabled).map(r => r.id).join(',')}.${colors.reset}`
+    `${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid}${colors.reset}`
   );
-
   console.log(
-    `${colors.gray}Exit layer: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | kill180BelowEntry=${CONFIG.EXIT.killAt180IfBidBelowEntry} | kill240Bid<${CONFIG.EXIT.killAt240IfBidBelow} | confirmations 180>=${CONFIG.EXIT.confirmAt180Bid}, 210>=${CONFIG.EXIT.confirmAt210Bid}, 240>=${CONFIG.EXIT.confirmAt240Bid}+flat30.${colors.reset}`
+    `${colors.gray}Surfaces ON: ${CONFIG.STRATEGY.surfaces.filter(s => s.enabled).map(s => s.id).join(', ')}${colors.reset}`
+  );
+  console.log(
+    `${colors.gray}Exit: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | structuralKill=${CONFIG.EXIT.structuralKillEnabled}${colors.reset}`
   );
 
   await loadCurrentMarket();
@@ -977,7 +1155,6 @@ async function run() {
     manageOpenTrade();
     settleIfNeeded();
 
-    // Move to next market after expiry.
     if (now >= currentMarket.endTimeMs + 1000 && !isSearchingNextMarket) {
       await loadCurrentMarket();
       return;
@@ -989,17 +1166,15 @@ async function run() {
       lastStatusPrintSec = nowSec;
 
       const status = trade.active
-        ? `HOLDING ${trade.side} @ $${fmt(trade.entryPrice)} (${trade.quality})`
-        : 'AWAITING_PATTERN_SETUP';
+        ? `HOLDING ${trade.side} @ $${fmt(trade.entryPrice)} (${trade.surfaceId})`
+        : 'AWAITING_SURFACE_SETUP';
 
       const statusColor = trade.active ? colors.cyan : colors.gray;
-
-      const yesMid = getYesMidNow();
-      const trend5 = getYesTrend(5);
-      const trend15 = getYesTrend(15);
+      const yesCtx = getSideContext('YES');
+      const noCtx = getSideContext('NO');
 
       console.log(
-        `${statusColor}[LIVE] ${status} | ${currentMarket.slug} | elapsed=${getElapsedSec()}s | left=${getSecondsLeft()}s | YES=${fmt(currentMarket.quote.YES.ask)} | NO=${fmt(currentMarket.quote.NO.ask)} | YES_mid=${fmt(yesMid)} | T5=${fmt(trend5)} | T15=${fmt(trend15)} | Bal=$${stats.currentBalance.toFixed(2)}${colors.reset}`
+        `${statusColor}[LIVE] ${status} | ${currentMarket.slug} | elapsed=${getElapsedSec()}s | left=${getSecondsLeft()}s | YES=${fmt(currentMarket.quote.YES.ask)} | NO=${fmt(currentMarket.quote.NO.ask)} | YESv5=${fmt(yesCtx && yesCtx.v5)} | YESv15=${fmt(yesCtx && yesCtx.v15)} | NOv5=${fmt(noCtx && noCtx.v5)} | NOv15=${fmt(noCtx && noCtx.v15)} | Bal=$${stats.currentBalance.toFixed(2)}${colors.reset}`
       );
     }
   }, 1000);
@@ -1007,13 +1182,10 @@ async function run() {
 
 process.on('SIGINT', () => {
   console.log(`\n${colors.yellow}[SHUTDOWN] Closing streams...${colors.reset}`);
-
   try { if (wsMarket) wsMarket.terminate(); } catch (_) {}
-
   tradeStream.end();
   priceStream.end();
   terminalStream.end();
-
   process.exit(0);
 });
 
@@ -1021,3 +1193,4 @@ run().catch((err) => {
   console.error(`${colors.red}[FATAL]${colors.reset}`, err);
   process.exit(1);
 });
+``
