@@ -5,22 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 // ============================================================
 // BTC 5m Polymarket PAPER BOT — Surface Edge V4
 //
-// Scraps old YES-mid-only rules.
-// Implements price-history findings as side-normalized surfaces:
-//
-// 1. Pullback with intact structure
-// 2. Loose continuation with sufficient confirmation
-// 3. Expensive collapse persistence
-// 4. Stable dominance, flat derivative
-// 5. Midgame underpriced stable side
-// 6. Late soft favorite non-takeover
-//
-// Still paper-only.
-// Still one trade per market.
-// Dashboard API remains compatible.
+// Core Surface Edge version.
+// Adds 24h session tracking anchored to first paper entry.
+// No server timezone / midnight dependency.
 // ============================================================
 
 const colors = {
@@ -46,14 +38,10 @@ const CONFIG = {
     name: 'Surface Edge V4',
     oneTradePerMarket: true,
 
-    // Global liquidity guard. Individual surfaces can be stricter.
     maxAllowedSpread: Number(process.env.MAX_ALLOWED_SPREAD || 0.05),
     requireBid: String(process.env.REQUIRE_BID || 'true').toLowerCase() === 'true',
-
-    // If true, prints why the best near-miss failed every 10s status cycle.
     debugSurface: String(process.env.DEBUG_SURFACE || 'false').toLowerCase() === 'true',
 
-    // Order matters. Earlier surfaces get priority if multiple match.
     surfaces: [
       {
         id: 'PULLBACK_INTACT_TREND',
@@ -72,7 +60,6 @@ const CONFIG = {
         leadMin: envNum('PULLBACK_LEAD_MIN', 0.15),
         maxOppBidMinusBid: envNum('PULLBACK_MAX_OPP_BID_MINUS_BID', 0.05),
       },
-
       {
         id: 'STABLE_DOMINANCE_70_80',
         enabled: envBool('ENABLE_STABLE_DOMINANCE_70_80', true),
@@ -92,7 +79,6 @@ const CONFIG = {
         leadMin: envNum('STABLE_DOM_LEAD_MIN', 0.25),
         leadMax: envNum('STABLE_DOM_LEAD_MAX', 0.50),
       },
-
       {
         id: 'MIDGAME_UNDERPRICED_STABLE',
         enabled: envBool('ENABLE_MIDGAME_UNDERPRICED_STABLE', true),
@@ -112,7 +98,6 @@ const CONFIG = {
         leadMin: envNum('MID_UNDER_LEAD_MIN', 0.10),
         leadMax: envNum('MID_UNDER_LEAD_MAX', 0.25),
       },
-
       {
         id: 'LOOSE_CONTINUATION',
         enabled: envBool('ENABLE_LOOSE_CONTINUATION', true),
@@ -128,7 +113,6 @@ const CONFIG = {
         v15Min: envNum('CONT_V15_MIN', 0.02),
         leadMin: envNum('CONT_LEAD_MIN', 0.15),
       },
-
       {
         id: 'EXPENSIVE_COLLAPSE_PERSISTENCE',
         enabled: envBool('ENABLE_EXPENSIVE_COLLAPSE_PERSISTENCE', true),
@@ -143,7 +127,6 @@ const CONFIG = {
         oppMidMax: envNum('EXP_COLLAPSE_OPP_MID_MAX', 0.25),
         leadMin: envNum('EXP_COLLAPSE_LEAD_MIN', 0.45),
       },
-
       {
         id: 'LATE_SOFT_FAV_NON_TAKEOVER',
         enabled: envBool('ENABLE_LATE_SOFT_FAV_NON_TAKEOVER', true),
@@ -160,7 +143,6 @@ const CONFIG = {
       },
     ],
 
-    // Explicit no-trade filters from the analysis.
     guards: {
       avoidTightMidCompression: envBool('AVOID_TIGHT_MID_COMPRESSION', true),
       avoidBadPullbackBreakdown: envBool('AVOID_BAD_PULLBACK_BREAKDOWN', true),
@@ -170,11 +152,7 @@ const CONFIG = {
   },
 
   EXIT: {
-    // Kept OFF. The tested edge is entry-to-settlement.
-    // Existing dashboard compatibility preserved.
     enabled: String(process.env.EXIT_ENABLED || 'false').toLowerCase() === 'true',
-
-    // Optional safety-only kill. Default false because old exit logic hurt expectancy.
     structuralKillEnabled: envBool('STRUCTURAL_KILL_ENABLED', false),
     minHoldSec: envNum('STRUCTURAL_KILL_MIN_HOLD_SEC', 25),
     adverseFromEntry: envNum('STRUCTURAL_KILL_ADVERSE_FROM_ENTRY', 0.14),
@@ -212,10 +190,6 @@ function envNum(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-// ----------------------------
-// GLOBAL STATE
-// ----------------------------
-
 let wsMarket = null;
 let isSearchingNextMarket = false;
 let searchCooldownUntil = 0;
@@ -234,6 +208,11 @@ let stats = {
   losses: 0,
   startingBalance: CONFIG.PAPER.startingBalance,
   currentBalance: CONFIG.PAPER.startingBalance,
+  daily: {
+    anchorTimeMs: null,
+    currentIndex: 0,
+    days: [],
+  },
 };
 
 function emptyMarket() {
@@ -278,9 +257,121 @@ function emptyTrade() {
   };
 }
 
-// ----------------------------
-// LOGGING
-// ----------------------------
+function emptyDayStats(index, startTimeMs, balanceStart) {
+  return {
+    index,
+    label: `Day ${index + 1}`,
+    startTimeMs,
+    endTimeMs: startTimeMs + DAY_MS,
+    totalTrades: 0,
+    wins: 0,
+    losses: 0,
+    pnl: 0,
+    balanceStart,
+    balanceEnd: balanceStart,
+    firstEntryTimeMs: null,
+    lastResultTimeMs: null,
+  };
+}
+
+function ensureDailyAnchor(anchorTimeMs = Date.now()) {
+  if (stats.daily.anchorTimeMs != null) return;
+
+  stats.daily.anchorTimeMs = anchorTimeMs;
+  stats.daily.currentIndex = 0;
+  stats.daily.days = [
+    emptyDayStats(0, anchorTimeMs, stats.currentBalance),
+  ];
+}
+
+function getOrCreateSessionDay(timeMs = Date.now(), updateCurrentIndex = false) {
+  if (stats.daily.anchorTimeMs == null) return null;
+
+  const safeTimeMs = Math.max(timeMs, stats.daily.anchorTimeMs);
+  const index = Math.floor((safeTimeMs - stats.daily.anchorTimeMs) / DAY_MS);
+
+  while (stats.daily.days.length <= index) {
+    const i = stats.daily.days.length;
+    const prev = stats.daily.days[i - 1];
+    const startTimeMs = stats.daily.anchorTimeMs + i * DAY_MS;
+    stats.daily.days.push(emptyDayStats(i, startTimeMs, prev ? prev.balanceEnd : stats.currentBalance));
+  }
+
+  if (updateCurrentIndex) stats.daily.currentIndex = index;
+
+  return stats.daily.days[index];
+}
+
+function recordDailyEntry(entryTimeMs) {
+  ensureDailyAnchor(entryTimeMs);
+  const day = getOrCreateSessionDay(entryTimeMs, true);
+  if (!day) return;
+  if (day.firstEntryTimeMs == null) day.firstEntryTimeMs = entryTimeMs;
+}
+
+function recordDailyResult(pnl, entryTimeMs, resultTimeMs = Date.now()) {
+  ensureDailyAnchor(entryTimeMs || resultTimeMs);
+  const day = getOrCreateSessionDay(entryTimeMs || resultTimeMs, false);
+  if (!day) return;
+
+  day.totalTrades += 1;
+
+  if (pnl > 0) day.wins += 1;
+  else day.losses += 1;
+
+  day.pnl += pnl;
+  day.balanceEnd = stats.currentBalance;
+  day.lastResultTimeMs = resultTimeMs;
+}
+
+function decorateDayForApi(day, isCurrent = false) {
+  if (!day) return null;
+
+  const winRate = day.totalTrades > 0 ? (day.wins / day.totalTrades) * 100 : 0;
+  const now = Date.now();
+
+  return {
+    index: day.index,
+    label: day.label,
+    startTimeMs: day.startTimeMs,
+    endTimeMs: day.endTimeMs,
+    secondsLeft: isCurrent ? Math.max(0, Math.floor((day.endTimeMs - now) / 1000)) : 0,
+    totalTrades: day.totalTrades,
+    wins: day.wins,
+    losses: day.losses,
+    winRate,
+    pnl: day.pnl,
+    balanceStart: day.balanceStart,
+    balanceEnd: day.balanceEnd,
+    firstEntryTimeMs: day.firstEntryTimeMs,
+    lastResultTimeMs: day.lastResultTimeMs,
+  };
+}
+
+function getDailyStatsForApi() {
+  if (stats.daily.anchorTimeMs == null) {
+    return {
+      started: false,
+      anchorTimeMs: null,
+      currentIndex: 0,
+      current: null,
+      recentDays: [],
+    };
+  }
+
+  const currentDay = getOrCreateSessionDay(Date.now(), true);
+
+  return {
+    started: true,
+    anchorTimeMs: stats.daily.anchorTimeMs,
+    currentIndex: stats.daily.currentIndex,
+    current: decorateDayForApi(currentDay, true),
+    recentDays: stats.daily.days
+      .slice(-7)
+      .map((day) => decorateDayForApi(day, day.index === stats.daily.currentIndex))
+      .reverse(),
+  };
+}
 
 const tradeStream = fs.createWriteStream(CONFIG.FILES.trades, { flags: 'a' });
 const priceStream = fs.createWriteStream(CONFIG.FILES.prices, { flags: 'a' });
@@ -340,10 +431,6 @@ function fmt(x) {
   return Number(x).toFixed(3);
 }
 
-// ----------------------------
-// TIME HELPERS
-// ----------------------------
-
 function getElapsedSec(now = Date.now()) {
   if (!currentMarket.startTimeMs) return 0;
   return Math.max(0, Math.floor((now - currentMarket.startTimeMs) / 1000));
@@ -360,10 +447,6 @@ function getCurrentBtc5mInterval(nowMs = Date.now()) {
   const endSec = startSec + CONFIG.MARKET.intervalSec;
   return { startSec, endSec, slug: `${CONFIG.MARKET.slugPrefix}-${startSec}` };
 }
-
-// ----------------------------
-// MARKET SCANNER
-// ----------------------------
 
 async function loadCurrentMarket() {
   if (isSearchingNextMarket) return;
@@ -424,10 +507,6 @@ async function loadCurrentMarket() {
   }
 }
 
-// ----------------------------
-// WEBSOCKET
-// ----------------------------
-
 function connectWebsocket() {
   if (wsMarket) {
     try { wsMarket.terminate(); } catch (_) {}
@@ -455,9 +534,7 @@ function connectWebsocket() {
     try {
       const data = JSON.parse(text);
       handleWsMessage(data);
-    } catch (_) {
-      // Ignore malformed heartbeat-ish payloads.
-    }
+    } catch (_) {}
   });
 
   wsMarket.on('close', () => {
@@ -532,10 +609,6 @@ function tokenToSide(tokenId) {
   return null;
 }
 
-// ----------------------------
-// QUOTE / SURFACE HELPERS
-// ----------------------------
-
 function handleMarketUpdate(update) {
   if (!update || !update.side) return;
 
@@ -576,12 +649,6 @@ function getSideBid(side) {
   return q.bid == null || Number.isNaN(Number(q.bid)) ? null : Number(q.bid);
 }
 
-function getSideSpread(side) {
-  const q = getSideQuote(side);
-  if (q.ask == null || q.bid == null) return null;
-  return Number(q.ask) - Number(q.bid);
-}
-
 function getSideMid(side) {
   const ask = getSideAsk(side);
   const bid = getSideBid(side);
@@ -609,19 +676,6 @@ function getSideTrend(side, secondsBack, nowElapsedSec = getElapsedSec()) {
   return nowMid - priorMid;
 }
 
-function getSideBidAtOrBefore(side, targetElapsedSec) {
-  if (!Array.isArray(currentMarket.priceTicks)) return null;
-
-  for (let i = currentMarket.priceTicks.length - 1; i >= 0; i--) {
-    const t = currentMarket.priceTicks[i];
-    if (t.elapsedSec <= targetElapsedSec && t[side] && t[side].bid != null) {
-      return Number(t[side].bid);
-    }
-  }
-
-  return null;
-}
-
 function getSideContext(side) {
   const opp = otherSide(side);
   const elapsed = getElapsedSec();
@@ -640,10 +694,6 @@ function getSideContext(side) {
   const oppSpread = oppAsk - oppBid;
   const maxSpread = Math.max(spread, oppSpread);
 
-  const v5 = getSideTrend(side, 5, elapsed);
-  const v15 = getSideTrend(side, 15, elapsed);
-  const v30 = getSideTrend(side, 30, elapsed);
-
   return {
     side,
     opp,
@@ -659,9 +709,9 @@ function getSideContext(side) {
     maxSpread,
     lead: heldMid - oppMid,
     bidLead: bid - oppBid,
-    v5,
-    v15,
-    v30,
+    v5: getSideTrend(side, 5, elapsed),
+    v15: getSideTrend(side, 15, elapsed),
+    v30: getSideTrend(side, 30, elapsed),
     yesMid: getSideMid('YES'),
     noMid: getSideMid('NO'),
   };
@@ -683,14 +733,10 @@ function passesRange(ctx, rule, field, minKey, maxKey) {
 
 function surfaceMatches(rule, ctx) {
   if (!rule.enabled) return false;
-
   if (!inRange(ctx.elapsed, rule.elapsedMin, rule.elapsedMax)) return false;
   if (!inRange(ctx.ask, rule.askMin, rule.askMax)) return false;
-
   if (CONFIG.STRATEGY.requireBid && (!ctx.bid || ctx.bid <= 0)) return false;
-
   if (ctx.maxSpread > CONFIG.STRATEGY.maxAllowedSpread) return false;
-
   if (!passesRange(ctx, rule, 'spread', 'spreadMin', 'spreadMax')) return false;
   if (!passesRange(ctx, rule, 'v5', 'v5Min', 'v5Max')) return false;
   if (!passesRange(ctx, rule, 'v15', 'v15Min', 'v15Max')) return false;
@@ -709,7 +755,6 @@ function surfaceMatches(rule, ctx) {
 function blockedByNoTradeGuard(ctx) {
   const g = CONFIG.STRATEGY.guards;
 
-  // Balanced tight compression was negative in state-level testing.
   if (
     g.avoidTightMidCompression &&
     inRange(ctx.ask, 0.48, 0.58) &&
@@ -722,7 +767,6 @@ function blockedByNoTradeGuard(ctx) {
     return 'GUARD_TIGHT_MID_COMPRESSION';
   }
 
-  // Bad pullback: both short and medium derivatives broken.
   if (
     g.avoidBadPullbackBreakdown &&
     inRange(ctx.ask, 0.60, 0.75) &&
@@ -735,7 +779,6 @@ function blockedByNoTradeGuard(ctx) {
     return 'GUARD_BAD_PULLBACK_BREAKDOWN';
   }
 
-  // High favorite but current derivative is stalling.
   if (
     g.avoidExhaustedFavorite &&
     inRange(ctx.elapsed, 45, 240) &&
@@ -749,7 +792,6 @@ function blockedByNoTradeGuard(ctx) {
     return 'GUARD_EXHAUSTED_FAVORITE';
   }
 
-  // Favorite with negative v5/v15 and opposite bid alive.
   if (
     g.avoidReversalDanger &&
     inRange(ctx.elapsed, 60, 260) &&
@@ -767,10 +809,6 @@ function blockedByNoTradeGuard(ctx) {
   return null;
 }
 
-// ----------------------------
-// STRATEGY
-// ----------------------------
-
 function evaluateSurfaceStrategy() {
   if (!currentMarket.slug || currentMarket.hasTraded || trade.active) return null;
 
@@ -783,6 +821,7 @@ function evaluateSurfaceStrategy() {
 
   for (const ctx of [yesCtx, noCtx]) {
     const guard = blockedByNoTradeGuard(ctx);
+
     if (guard) {
       maybeDebugSurface(ctx, guard);
       continue;
@@ -827,7 +866,6 @@ function evaluateSurfaceStrategy() {
 }
 
 function scoreCandidate(surface, ctx) {
-  // Not an ML score. Just deterministic priority within tied surfaces.
   const payout = 1 / ctx.ask - 1;
   const structure = Math.max(0, ctx.lead) + Math.max(0, ctx.v15 || 0) + Math.max(0, ctx.v5 || 0);
   const spreadPenalty = ctx.spread * 2;
@@ -849,18 +887,16 @@ function buildReason(surface, ctx) {
 
 function maybeDebugSurface(ctx, guard) {
   if (!CONFIG.STRATEGY.debugSurface) return;
+
   const nowSec = Math.floor(Date.now() / 1000);
   if (nowSec === lastDebugSurfaceSec) return;
+
   lastDebugSurfaceSec = nowSec;
 
   console.log(
     `${colors.gray}[SURFACE GUARD] ${guard} ${ctx.side} ask=${fmt(ctx.ask)} spread=${fmt(ctx.spread)} v5=${fmt(ctx.v5)} v15=${fmt(ctx.v15)} lead=${fmt(ctx.lead)} elapsed=${ctx.elapsed}${colors.reset}`
   );
 }
-
-// ----------------------------
-// PAPER BROKER
-// ----------------------------
 
 function executePaperEntry(signal) {
   if (!signal || currentMarket.hasTraded || trade.active) return;
@@ -889,6 +925,8 @@ function executePaperEntry(signal) {
 
   currentMarket.hasTraded = true;
   currentMarket.peakHeldBid = getSideBid(trade.side);
+
+  recordDailyEntry(trade.entryTime);
 
   console.log(
     `\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.surfaceId} | elapsed=${trade.entryElapsedSec}s | ${trade.quality}${colors.reset}`
@@ -931,7 +969,9 @@ function executePaperExit(reason, exitBid, v15 = null, lead = null) {
   stats.totalTrades += 1;
   if (pnl > 0) stats.wins += 1;
   else stats.losses += 1;
+
   stats.currentBalance += pnl;
+  recordDailyResult(pnl, trade.entryTime, Date.now());
 
   const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
   const c = pnl > 0 ? colors.green : colors.red;
@@ -1031,7 +1071,9 @@ function settleIfNeeded() {
   stats.totalTrades += 1;
   if (pnl > 0) stats.wins += 1;
   else stats.losses += 1;
+
   stats.currentBalance += pnl;
+  recordDailyResult(pnl, trade.entryTime, Date.now());
 
   const winRate = ((stats.wins / stats.totalTrades) * 100).toFixed(1);
   const c = pnl > 0 ? colors.green : colors.red;
@@ -1087,15 +1129,12 @@ function inferWinnerFromFinalQuotes() {
   return yesAsk > noAsk ? 'YES' : 'NO';
 }
 
-// ----------------------------
-// DASHBOARD SERVER
-// ----------------------------
-
 http.createServer((req, res) => {
   if (req.url === '/api/live') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       stats,
+      daily: getDailyStatsForApi(),
       trade,
       currentPrices,
       recentTrades,
@@ -1125,22 +1164,12 @@ http.createServer((req, res) => {
   console.log(`${colors.cyan}[DASHBOARD] Web UI running on port ${CONFIG.SERVER.port}${colors.reset}`);
 });
 
-// ----------------------------
-// MAIN LOOP
-// ----------------------------
-
 async function run() {
   console.log(`${colors.magenta}Booting BTC 5m Surface Edge V4 PAPER BOT...${colors.reset}`);
   console.log(`${colors.gray}Paper trading only. No PRIVATE_KEY required.${colors.reset}`);
-  console.log(
-    `${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid}${colors.reset}`
-  );
-  console.log(
-    `${colors.gray}Surfaces ON: ${CONFIG.STRATEGY.surfaces.filter(s => s.enabled).map(s => s.id).join(', ')}${colors.reset}`
-  );
-  console.log(
-    `${colors.gray}Exit: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | structuralKill=${CONFIG.EXIT.structuralKillEnabled}${colors.reset}`
-  );
+  console.log(`${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid}${colors.reset}`);
+  console.log(`${colors.gray}Surfaces ON: ${CONFIG.STRATEGY.surfaces.filter(s => s.enabled).map(s => s.id).join(', ')}${colors.reset}`);
+  console.log(`${colors.gray}Exit: ${CONFIG.EXIT.enabled ? 'ON' : 'OFF'} | structuralKill=${CONFIG.EXIT.structuralKillEnabled}${colors.reset}`);
 
   await loadCurrentMarket();
 
@@ -1193,4 +1222,3 @@ run().catch((err) => {
   console.error(`${colors.red}[FATAL]${colors.reset}`, err);
   process.exit(1);
 });
-``

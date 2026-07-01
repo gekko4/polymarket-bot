@@ -6,34 +6,26 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>PolyBot Terminal</title>
-  
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-  
+
   <style>
     :root {
       --bg-base: #07080a;
       --glass-bg: rgba(18, 20, 28, 0.55);
       --glass-border: rgba(255, 255, 255, 0.08);
       --glass-light: rgba(255, 255, 255, 0.12);
-      
       --text-main: #f8fafc;
       --text-muted: #8b95a5;
-      
       --gold-light: #FDE047;
       --gold-mid: #D97706;
-      
       --btc-orange: #f7931a;
       --btc-glow: rgba(247, 147, 26, 0.4);
-      
       --poly-blue: #00e5ff;
       --poly-glow: rgba(0, 229, 255, 0.4);
-      
       --green: #00e676;
       --red: #ff3b30;
-      
       --radius-lg: 24px;
       --radius-md: 16px;
-      
       --font-family: 'Space Grotesk', system-ui, sans-serif;
     }
 
@@ -44,7 +36,7 @@
       color: var(--text-main);
       font-family: var(--font-family);
       background-color: var(--bg-base);
-      background-image: 
+      background-image:
         radial-gradient(circle at 15% 0%, var(--poly-glow) 0%, transparent 40%),
         radial-gradient(circle at 85% 100%, var(--btc-glow) 0%, transparent 40%);
       background-attachment: fixed;
@@ -53,15 +45,14 @@
       justify-content: center;
     }
 
-    .app { 
-      width: 100%; 
-      max-width: 420px; 
+    .app {
+      width: 100%;
+      max-width: 420px;
       display: flex;
       flex-direction: column;
       gap: 20px;
     }
 
-    /* GLASS CARDS */
     .glass-card {
       background: var(--glass-bg);
       backdrop-filter: blur(20px);
@@ -74,7 +65,6 @@
       position: relative;
     }
 
-    /* SECTION HEADERS */
     .section-header {
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -84,7 +74,6 @@
       font-weight: 600;
     }
 
-    /* TOP NAV */
     .top {
       display: flex;
       align-items: center;
@@ -123,9 +112,9 @@
       background: var(--text-muted);
       transition: all 0.3s ease;
     }
+
     .dot.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
 
-    /* HERO BALANCE */
     .hero {
       text-align: center;
       padding: 32px 20px 24px;
@@ -151,7 +140,6 @@
       line-height: 1;
     }
 
-    /* DYNAMIC STATS GRID */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -163,7 +151,6 @@
       background: rgba(0, 0, 0, 0.2);
     }
 
-    /* Dynamic colors applied via JS */
     .stats-grid.positive {
       background: rgba(0, 230, 118, 0.08);
       border-color: rgba(0, 230, 118, 0.2);
@@ -180,7 +167,6 @@
     .stat-label { font-size: 0.65rem; color: var(--text-muted); letter-spacing: 0.1em; }
     .stat-val { font-size: 0.95rem; font-weight: 600; color: var(--text-main); }
 
-    /* MARKET CARD */
     .market-header {
       display: flex;
       justify-content: space-between;
@@ -200,7 +186,6 @@
       padding-right: 12px;
     }
 
-    /* CIRCULAR TIMER BADGE */
     .timer-badge {
       display: flex;
       align-items: center;
@@ -218,17 +203,9 @@
       font-variant-numeric: tabular-nums;
     }
 
-    .svg-ring {
-      width: 18px;
-      height: 18px;
-    }
-    
-    .svg-ring-bg {
-      fill: none;
-      stroke: rgba(255, 255, 255, 0.1);
-      stroke-width: 3;
-    }
-    
+    .svg-ring { width: 18px; height: 18px; }
+    .svg-ring-bg { fill: none; stroke: rgba(255, 255, 255, 0.1); stroke-width: 3; }
+
     .svg-ring-fill {
       fill: none;
       stroke: var(--gold-mid);
@@ -240,7 +217,6 @@
       transform-origin: 50% 50%;
     }
 
-    /* PRICES & POSITION */
     .price-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -285,7 +261,6 @@
     .pos-details { font-size: 0.85rem; font-weight: 600; }
     .pos-details.active { color: var(--gold-mid); }
 
-    /* HISTORY */
     .history-card { padding-bottom: 12px; }
 
     .trade {
@@ -295,12 +270,13 @@
       padding: 14px 0;
       border-bottom: 1px solid rgba(255,255,255,0.04);
     }
+
     .trade:last-child { border-bottom: none; }
-    
+
     .trade-info { display: flex; flex-direction: column; gap: 4px; overflow: hidden; padding-right: 12px; }
     .trade-title { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .trade-meta { font-size: 0.75rem; color: var(--text-muted); }
-    
+
     .trade-pnl { font-size: 1rem; font-weight: 700; text-align: right; }
     .trade-pnl.green { color: var(--green); }
     .trade-pnl.red { color: var(--red); }
@@ -308,10 +284,10 @@
     .empty { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 20px 0; }
   </style>
 </head>
+
 <body>
   <main class="app">
-    
-    <!-- Header -->
+
     <header class="top">
       <div class="brand">POLYBOT</div>
       <div class="status-pill">
@@ -320,36 +296,32 @@
       </div>
     </header>
 
-    <!-- Hero / Balance -->
     <section class="glass-card hero">
       <div class="section-header">Paper Equity</div>
       <div id="balance" class="balance">$0.00</div>
-      
-      <!-- Dynamic colored stat grid -->
+
       <div id="statsGrid" class="stats-grid">
         <div class="stat">
           <span class="stat-label">ROI</span>
           <span id="roi" class="stat-val">0.00%</span>
         </div>
         <div class="stat" style="text-align: center;">
-          <span class="stat-label">WIN %</span>
-          <span id="winrate" class="stat-val">0.0%</span>
+          <span class="stat-label">24H PNL</span>
+          <span id="dayPnl" class="stat-val">$0.00</span>
         </div>
         <div class="stat" style="text-align: right;">
-          <span class="stat-label">W/L</span>
-          <span id="wl" class="stat-val">0/0</span>
+          <span class="stat-label">24H W/L</span>
+          <span id="dayWl" class="stat-val">0/0</span>
         </div>
       </div>
     </section>
 
-    <!-- Market & Position -->
     <section class="glass-card">
       <div class="section-header">Live Market Data</div>
-      
+
       <div class="market-header">
         <div id="marketTitle" class="market-title">Scanning...</div>
-        
-        <!-- New sleek SVG timer badge -->
+
         <div class="timer-badge">
           <svg class="svg-ring" viewBox="0 0 36 36">
             <path class="svg-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
@@ -376,7 +348,6 @@
       </div>
     </section>
 
-    <!-- Recent Trades -->
     <section class="glass-card history-card">
       <div class="section-header">Recent Activity</div>
       <div id="history">
@@ -394,18 +365,21 @@
       if (!Number.isFinite(n) || n <= 0) return '—';
       return Math.round(n * 100) + '¢';
     }
-    
+
     function money(x) {
       const n = Number(x);
-      return '$' + (Number.isFinite(n) ? n : 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      return '$' + (Number.isFinite(n) ? n : 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
     }
-    
+
     function signed(x) {
       const n = Number(x);
       if (!Number.isFinite(n)) return '$0.00';
       return (n >= 0 ? '+' : '-') + '$' + Math.abs(n).toFixed(2);
     }
-    
+
     function clock(sec) {
       const n = Number(sec);
       if (!Number.isFinite(n) || n < 0) return '0:00';
@@ -416,6 +390,7 @@
 
     function formatTitle(title) {
       if (!title) return 'Scanning Markets...';
+
       return title
         .replace(/Bitcoin/gi, 'BTC')
         .replace(/price/gi, '')
@@ -428,15 +403,17 @@
 
     function renderHistory(items) {
       const container = $('history');
+
       if (!items || !items.length) {
         container.innerHTML = '<div class="empty">No settled trades yet.</div>';
         return;
       }
-      
+
       container.innerHTML = items.slice(0, 3).map(t => {
         const pnl = Number(t.pnl || 0);
         const cls = pnl >= 0 ? 'green' : 'red';
         const title = formatTitle(String(t.reason || 'Settlement').replaceAll('_', ' '));
+
         return `
           <div class="trade">
             <div class="trade-info">
@@ -449,10 +426,25 @@
       }).join('');
     }
 
+    function renderDaily(daily) {
+      const current = daily && daily.started ? daily.current : null;
+
+      if (!current) {
+        $('dayPnl').textContent = '$0.00';
+        $('dayWl').textContent = '0/0';
+        return;
+      }
+
+      const pnl = Number(current.pnl || 0);
+      $('dayPnl').textContent = signed(pnl);
+      $('dayWl').textContent = `${Number(current.wins || 0)}/${Number(current.losses || 0)}`;
+    }
+
     async function tick() {
       try {
         const res = await fetch('/api/live', { cache: 'no-store' });
         const data = await res.json();
+
         const stats = data.stats || {};
         const trade = data.trade || {};
         const prices = data.currentPrices || {};
@@ -460,46 +452,35 @@
 
         const bal = Number(stats.currentBalance || 0);
         const start = Number(stats.startingBalance || 0);
-        const total = Number(stats.totalTrades || 0);
-        const wins = Number(stats.wins || 0);
-        const losses = Number(stats.losses || 0);
-        
-        const roi = start ? ((bal - start) / start) * 100 : 0;
-        const wr = total ? (wins / total) * 100 : 0;
 
-        // Dynamic Colors & Stats Data
+        const roi = start ? ((bal - start) / start) * 100 : 0;
+
         $('balance').textContent = money(bal);
         $('roi').textContent = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
-        $('winrate').textContent = `${wr.toFixed(1)}%`;
-        $('wl').textContent = `${wins}/${losses}`;
-        
-        // Change grid background based on profit/loss
+
         if (roi > 0) $('statsGrid').className = 'stats-grid positive';
         else if (roi < 0) $('statsGrid').className = 'stats-grid negative';
         else $('statsGrid').className = 'stats-grid';
 
-        // Market Data & Circular SVG Timer logic
+        renderDaily(data.daily);
+
         $('marketTitle').textContent = formatTitle(market.title);
         $('left').textContent = clock(market.secondsLeft);
-        
-        // Calculate stroke-dasharray (100 is a full circle)
-        // Elapsed determines how much of the 5-min (300 sec) has passed
-        const totalSecs = 300; 
+
+        const totalSecs = 300;
         const elapsed = Number(market.elapsedSec || 0);
         const remainingPct = Math.max(0, Math.min(100, ((totalSecs - elapsed) / totalSecs) * 100));
-        
+
         const ring = $('timeRing');
         ring.style.strokeDasharray = `${remainingPct}, 100`;
-        // Turn ring red if < 1 minute left (less than 20%)
         ring.style.stroke = remainingPct < 20 ? 'var(--red)' : 'var(--gold-mid)';
 
-        // Pricing
         $('yes').textContent = cents(prices.YES);
         $('no').textContent = cents(prices.NO);
 
         const isYes = trade.active && String(trade.side).toUpperCase() === 'YES';
         const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
-        
+
         $('boxYes').className = isYes ? 'price-box active-yes' : 'price-box';
         $('boxNo').className = isNo ? 'price-box active-no' : 'price-box';
 
