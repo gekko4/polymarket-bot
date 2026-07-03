@@ -310,7 +310,7 @@
           <span id="dayPnl" class="stat-val">$0.00</span>
         </div>
         <div class="stat" style="text-align: right;">
-          <span class="stat-label">24H W/L</span>
+          <span class="stat-label">WIN RATE</span>
           <span id="dayWl" class="stat-val">0/0</span>
         </div>
       </div>
@@ -462,7 +462,7 @@
         else if (roi < 0) $('statsGrid').className = 'stats-grid negative';
         else $('statsGrid').className = 'stats-grid';
 
-        renderDaily(data.daily);
+        renderDaily(data.daily, stats);
 
         $('marketTitle').textContent = formatTitle(market.title);
         $('left').textContent = clock(market.secondsLeft);
