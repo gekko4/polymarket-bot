@@ -543,7 +543,6 @@
         const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
         $('boxYes').className = isYes ? 'price-box active-yes' : 'price-box';
         $('boxNo').className = isNo ? 'price-box active-no' : 'price-box';
-
         if (trade.active) {
           $('pulse').className = 'dot on';
           $('status').textContent = 'Arb Watch';

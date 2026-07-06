@@ -8,7 +8,7 @@ const http = require('http');
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ============================================================
-// BTC 5m Polymarket PAPER BOT — LOOSE_CONTINUATION Arb-Lock
+// BTC 5m Polymarket PAPER BOT — Tuned LOOSE_CONTINUATION Arb-Lock
 //
 // Strategy entry:
 //   - Only LOOSE_CONTINUATION is allowed.
@@ -55,7 +55,7 @@ const CONFIG = {
   },
 
   STRATEGY: {
-    name: 'Loose Continuation Arb-Lock',
+    name: 'Tuned Loose Continuation Arb-Lock',
     oneTradePerMarket: true,
     maxAllowedSpread: Number(process.env.MAX_ALLOWED_SPREAD || 0.05),
     requireBid: String(process.env.REQUIRE_BID || 'true').toLowerCase() === 'true',
@@ -72,7 +72,7 @@ const CONFIG = {
         elapsedMin: envNum('CONT_ELAPSED_MIN', 30),
         elapsedMax: envNum('CONT_ELAPSED_MAX', 210),
         askMin: envNum('CONT_ASK_MIN', 0.60),
-        askMax: envNum('CONT_ASK_MAX', 0.82),
+        askMax: envNum('CONT_ASK_MAX', 0.70),
         spreadMax: envNum('CONT_SPREAD_MAX', 0.05),
         v5Min: envNum('CONT_V5_MIN', 0.01),
         v15Min: envNum('CONT_V15_MIN', 0.02),
@@ -634,7 +634,7 @@ function executePaperEntry(signal) {
   currentMarket.hasTraded = true;
   currentMarket.peakHeldBid = getSideBid(trade.side);
   recordDailyEntry(trade.entryTime);
-  console.log(`\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.surfaceId} | elapsed=${trade.entryElapsedSec}s | targetCostSum<=${CONFIG.ARB.targetCostSum} | deadline=${CONFIG.ARB.deadlineSec}s${colors.reset}`);
+  console.log(`\n${colors.cyan}[PAPER ENTRY] BUY ${trade.side} @ ${fmt(trade.entryPrice)} | ${trade.surfaceId} | stake=$${CONFIG.PAPER.stakeUsd} | elapsed=${trade.entryElapsedSec}s | targetCostSum<=${CONFIG.ARB.targetCostSum} | deadline=${CONFIG.ARB.deadlineSec}s${colors.reset}`);
   const winRate = stats.totalTrades > 0 ? ((stats.wins / stats.totalTrades) * 100).toFixed(1) : '0.0';
   tradeStream.write([
     new Date().toISOString(), trade.marketSlug, 'ENTRY', trade.side, fmt(trade.entryPrice), '',
@@ -774,9 +774,9 @@ http.createServer((req, res) => {
 });
 
 async function run() {
-  console.log(`${colors.magenta}Booting BTC 5m LOOSE_CONTINUATION Arb-Lock PAPER BOT...${colors.reset}`);
+  console.log(`${colors.magenta}Booting BTC 5m TUNED LOOSE_CONTINUATION Arb-Lock PAPER BOT...${colors.reset}`);
   console.log(`${colors.gray}Paper trading only. No PRIVATE_KEY required.${colors.reset}`);
-  console.log(`${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid}${colors.reset}`);
+  console.log(`${colors.gray}Strategy: ${CONFIG.STRATEGY.name} | ask=${CONFIG.STRATEGY.surfaces[0].askMin}-${CONFIG.STRATEGY.surfaces[0].askMax} | stake=$${CONFIG.PAPER.stakeUsd} | maxSpread<=${CONFIG.STRATEGY.maxAllowedSpread} | requireBid=${CONFIG.STRATEGY.requireBid}${colors.reset}`);
   console.log(`${colors.gray}Surfaces ON: ${CONFIG.STRATEGY.surfaces.filter(s => s.enabled).map(s => s.id).join(', ')}${colors.reset}`);
   console.log(`${colors.gray}Arb: ${CONFIG.ARB.enabled ? 'ON' : 'OFF'} | targetCostSum<=${CONFIG.ARB.targetCostSum} | deadline=${CONFIG.ARB.deadlineSec}s after entry${colors.reset}`);
   await loadCurrentMarket();
