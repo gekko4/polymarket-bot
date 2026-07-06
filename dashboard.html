@@ -27,14 +27,12 @@
       --radius-md: 16px;
       --font-family: 'Space Grotesk', system-ui, sans-serif;
     }
-
     * {
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
       margin: 0;
       padding: 0;
     }
-
     body {
       min-height: 100vh;
       color: var(--text-main);
@@ -48,7 +46,6 @@
       display: flex;
       justify-content: center;
     }
-
     .app {
       width: 100%;
       max-width: 420px;
@@ -56,7 +53,6 @@
       flex-direction: column;
       gap: 20px;
     }
-
     .glass-card {
       background: var(--glass-bg);
       backdrop-filter: blur(20px);
@@ -68,7 +64,6 @@
       padding: 22px;
       position: relative;
     }
-
     .section-header {
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -77,14 +72,12 @@
       margin-bottom: 16px;
       font-weight: 600;
     }
-
     .top {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 0 4px;
     }
-
     .brand {
       font-size: 1.3rem;
       font-weight: 800;
@@ -94,7 +87,6 @@
       -webkit-text-fill-color: transparent;
       text-shadow: 0 4px 12px rgba(217, 119, 6, 0.3);
     }
-
     .status-pill {
       display: flex;
       align-items: center;
@@ -108,7 +100,6 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
-
     .dot {
       width: 8px;
       height: 8px;
@@ -116,18 +107,15 @@
       background: var(--text-muted);
       transition: all 0.3s ease;
     }
-
     .dot.on {
       background: var(--green);
       box-shadow: 0 0 10px var(--green);
     }
-
     .hero {
       text-align: center;
       padding: 32px 20px 24px;
       overflow: hidden;
     }
-
     .hero::before {
       content: '';
       position: absolute;
@@ -138,7 +126,6 @@
       background: linear-gradient(90deg, transparent, var(--gold-mid), transparent);
       opacity: 0.6;
     }
-
     .balance {
       font-size: 3.5rem;
       font-weight: 700;
@@ -149,7 +136,6 @@
       margin-bottom: 24px;
       line-height: 1;
     }
-
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -160,44 +146,37 @@
       border: 1px solid var(--glass-border);
       background: rgba(0, 0, 0, 0.2);
     }
-
     .stats-grid.positive {
       background: rgba(0, 230, 118, 0.08);
       border-color: rgba(0, 230, 118, 0.2);
       box-shadow: inset 0 0 20px rgba(0, 230, 118, 0.05);
     }
-
     .stats-grid.negative {
       background: rgba(255, 59, 48, 0.08);
       border-color: rgba(255, 59, 48, 0.2);
       box-shadow: inset 0 0 20px rgba(255, 59, 48, 0.05);
     }
-
     .stat {
       display: flex;
       flex-direction: column;
       gap: 4px;
     }
-
     .stat-label {
       font-size: 0.65rem;
       color: var(--text-muted);
       letter-spacing: 0.1em;
     }
-
     .stat-val {
       font-size: 0.95rem;
       font-weight: 600;
       color: var(--text-main);
     }
-
     .market-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
     }
-
     .market-title {
       font-size: 1.1rem;
       font-weight: 600;
@@ -209,7 +188,6 @@
       flex: 1;
       padding-right: 12px;
     }
-
     .timer-badge {
       display: flex;
       align-items: center;
@@ -219,25 +197,21 @@
       padding: 4px 10px 4px 6px;
       border-radius: 999px;
     }
-
     .time-left {
       font-size: 0.8rem;
       font-weight: 600;
       color: #fff;
       font-variant-numeric: tabular-nums;
     }
-
     .svg-ring {
       width: 18px;
       height: 18px;
     }
-
     .svg-ring-bg {
       fill: none;
       stroke: rgba(255, 255, 255, 0.1);
       stroke-width: 3;
     }
-
     .svg-ring-fill {
       fill: none;
       stroke: var(--gold-mid);
@@ -248,14 +222,12 @@
       transform: rotate(-90deg);
       transform-origin: 50% 50%;
     }
-
     .price-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
       margin-bottom: 16px;
     }
-
     .price-box {
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid rgba(255,255,255,0.04);
@@ -264,39 +236,32 @@
       text-align: center;
       transition: all 0.3s;
     }
-
     .price-box.active-yes {
       border-color: var(--poly-blue);
       background: rgba(0, 229, 255, 0.05);
     }
-
     .price-box.active-no {
       border-color: var(--btc-orange);
       background: rgba(247, 147, 26, 0.05);
     }
-
     .price-label {
       font-size: 0.7rem;
       color: var(--text-muted);
       letter-spacing: 0.15em;
       margin-bottom: 8px;
     }
-
     .price-val {
       font-size: 1.6rem;
       font-weight: 700;
     }
-
     .val-yes {
       color: var(--poly-blue);
       text-shadow: 0 0 12px var(--poly-glow);
     }
-
     .val-no {
       color: var(--btc-orange);
       text-shadow: 0 0 12px var(--btc-glow);
     }
-
     .position-bar {
       display: flex;
       justify-content: space-between;
@@ -306,27 +271,25 @@
       border-radius: var(--radius-md);
       border: 1px solid rgba(255,255,255,0.03);
     }
-
     .pos-label {
       font-size: 0.75rem;
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.1em;
     }
-
     .pos-details {
       font-size: 0.85rem;
       font-weight: 600;
+      text-align: right;
+      max-width: 260px;
+      line-height: 1.35;
     }
-
     .pos-details.active {
       color: var(--gold-mid);
     }
-
     .history-card {
       padding-bottom: 12px;
     }
-
     .trade {
       display: flex;
       align-items: center;
@@ -334,11 +297,9 @@
       padding: 14px 0;
       border-bottom: 1px solid rgba(255,255,255,0.04);
     }
-
     .trade:last-child {
       border-bottom: none;
     }
-
     .trade-info {
       display: flex;
       flex-direction: column;
@@ -346,7 +307,6 @@
       overflow: hidden;
       padding-right: 12px;
     }
-
     .trade-title {
       font-size: 0.85rem;
       font-weight: 600;
@@ -354,26 +314,21 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-
     .trade-meta {
       font-size: 0.75rem;
       color: var(--text-muted);
     }
-
     .trade-pnl {
       font-size: 1rem;
       font-weight: 700;
       text-align: right;
     }
-
     .trade-pnl.green {
       color: var(--green);
     }
-
     .trade-pnl.red {
       color: var(--red);
     }
-
     .empty {
       text-align: center;
       color: var(--text-muted);
@@ -395,18 +350,15 @@
     <section class="glass-card hero">
       <div class="section-header">Paper Equity</div>
       <div id="balance" class="balance">$0.00</div>
-
       <div id="statsGrid" class="stats-grid">
         <div class="stat">
           <span class="stat-label">ROI</span>
           <span id="roi" class="stat-val">0.00%</span>
         </div>
-
         <div class="stat" style="text-align: center;">
           <span class="stat-label">24H PNL</span>
           <span id="dayPnl" class="stat-val">$0.00</span>
         </div>
-
         <div class="stat" style="text-align: right;">
           <span class="stat-label">WIN RATE</span>
           <span id="dayWl" class="stat-val">0.0%</span>
@@ -416,10 +368,8 @@
 
     <section class="glass-card">
       <div class="section-header">Live Market Data</div>
-
       <div class="market-header">
         <div id="marketTitle" class="market-title">Scanning...</div>
-
         <div class="timer-badge">
           <svg class="svg-ring" viewBox="0 0 36 36">
             <path class="svg-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
@@ -434,7 +384,6 @@
           <div class="price-label">YES ASK</div>
           <div id="yes" class="price-val val-yes">—</div>
         </div>
-
         <div id="boxNo" class="price-box">
           <div class="price-label">NO ASK</div>
           <div id="no" class="price-val val-no">—</div>
@@ -481,16 +430,13 @@
     function clock(sec) {
       const n = Number(sec);
       if (!Number.isFinite(n) || n < 0) return '0:00';
-
       const m = Math.floor(n / 60);
       const s = Math.floor(n % 60);
-
       return m + ':' + String(s).padStart(2, '0');
     }
 
     function formatTitle(title) {
       if (!title) return 'Scanning Markets...';
-
       return title
         .replace(/Bitcoin/gi, 'BTC')
         .replace(/price/gi, '')
@@ -503,17 +449,14 @@
 
     function renderHistory(items) {
       const container = $('history');
-
       if (!items || !items.length) {
         container.innerHTML = '<div class="empty">No settled trades yet.</div>';
         return;
       }
-
       container.innerHTML = items.slice(0, 3).map(t => {
         const pnl = Number(t.pnl || 0);
         const cls = pnl >= 0 ? 'green' : 'red';
         const title = formatTitle(String(t.reason || 'Settlement').replaceAll('_', ' '));
-
         return `
           <div class="trade">
             <div class="trade-info">
@@ -528,43 +471,59 @@
 
     function renderDaily(daily, stats) {
       const current = daily && daily.started ? daily.current : null;
-
       if (!current) {
         $('dayPnl').textContent = '$0.00';
       } else {
         const pnl = Number(current.pnl || 0);
         $('dayPnl').textContent = signed(pnl);
       }
-
       const wins = Number(stats.wins || 0);
       const losses = Number(stats.losses || 0);
       const total = wins + losses;
       const winRate = total > 0 ? (wins / total) * 100 : 0;
-
       $('dayWl').textContent = `${winRate.toFixed(1)}%`;
+    }
+
+    function renderArbStatus(trade, prices, market) {
+      const arb = market.arb || {};
+      const side = String(trade.side || '').toUpperCase();
+      const oppSide = trade.oppositeSide || (side === 'YES' ? 'NO' : 'YES');
+      const entryPrice = Number(trade.entryPrice || 0);
+      const oppAsk = Number(prices[oppSide] || 0);
+      const target = Number(arb.targetCostSum || trade.arbTargetCostSum || 0.95);
+      const deadline = Number(arb.deadlineSec || trade.arbDeadlineSec || 60);
+      const marketElapsed = Number(market.elapsedSec || 0);
+      const entryElapsed = Number(trade.entryElapsedSec || 0);
+      const sinceEntry = Math.max(0, marketElapsed - entryElapsed);
+      const untilDeadline = Math.max(0, deadline - sinceEntry);
+      const costSum = entryPrice && oppAsk ? entryPrice + oppAsk : null;
+
+      if (!costSum) {
+        return `${trade.side || 'OPEN'} @ ${cents(entryPrice)}`;
+      }
+
+      const gap = costSum - target;
+      const mode = costSum <= target ? 'CLEAN ARB READY' : `LOCK IN ${untilDeadline}s`;
+      return `${side} @ ${cents(entryPrice)} | ${oppSide} ${cents(oppAsk)}<br>${mode} | sum ${costSum.toFixed(3)} / ${target.toFixed(2)} | gap ${gap >= 0 ? '+' : ''}${gap.toFixed(3)}`;
     }
 
     async function tick() {
       try {
         const res = await fetch('/api/live', { cache: 'no-store' });
         const data = await res.json();
-
         const stats = data.stats || {};
         const trade = data.trade || {};
         const prices = data.currentPrices || {};
         const market = data.market || {};
-
         const bal = Number(stats.currentBalance || 0);
         const start = Number(stats.startingBalance || 0);
         const roi = start ? ((bal - start) / start) * 100 : 0;
 
         $('balance').textContent = money(bal);
         $('roi').textContent = `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`;
-
         if (roi > 0) $('statsGrid').className = 'stats-grid positive';
         else if (roi < 0) $('statsGrid').className = 'stats-grid negative';
         else $('statsGrid').className = 'stats-grid';
-
         renderDaily(data.daily, stats);
 
         $('marketTitle').textContent = formatTitle(market.title);
@@ -573,7 +532,6 @@
         const totalSecs = 300;
         const elapsed = Number(market.elapsedSec || 0);
         const remainingPct = Math.max(0, Math.min(100, ((totalSecs - elapsed) / totalSecs) * 100));
-
         const ring = $('timeRing');
         ring.style.strokeDasharray = `${remainingPct}, 100`;
         ring.style.stroke = remainingPct < 20 ? 'var(--red)' : 'var(--gold-mid)';
@@ -583,20 +541,19 @@
 
         const isYes = trade.active && String(trade.side).toUpperCase() === 'YES';
         const isNo = trade.active && String(trade.side).toUpperCase() === 'NO';
-
         $('boxYes').className = isYes ? 'price-box active-yes' : 'price-box';
         $('boxNo').className = isNo ? 'price-box active-no' : 'price-box';
 
         if (trade.active) {
           $('pulse').className = 'dot on';
-          $('status').textContent = 'Holding';
+          $('status').textContent = 'Arb Watch';
           $('posDetails').className = 'pos-details active';
-          $('posDetails').textContent = `${trade.side || 'OPEN'} @ ${cents(trade.entryPrice)}`;
+          $('posDetails').innerHTML = renderArbStatus(trade, prices, market);
         } else {
           $('pulse').className = 'dot';
           $('status').textContent = market.slug ? 'Hunting' : 'Syncing';
           $('posDetails').className = 'pos-details';
-          $('posDetails').textContent = market.slug ? 'Waiting for setup...' : 'Awaiting market';
+          $('posDetails').textContent = market.slug ? 'Waiting for LOOSE_CONTINUATION...' : 'Awaiting market';
         }
 
         renderHistory(data.recentTrades || []);
