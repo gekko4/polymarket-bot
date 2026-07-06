@@ -72,7 +72,7 @@ const CONFIG = {
         elapsedMin: envNum('CONT_ELAPSED_MIN', 30),
         elapsedMax: envNum('CONT_ELAPSED_MAX', 210),
         askMin: envNum('CONT_ASK_MIN', 0.60),
-        askMax: envNum('CONT_ASK_MAX', 0.70),
+        askMax: envNum('CONT_ASK_MAX', 0.65),
         spreadMax: envNum('CONT_SPREAD_MAX', 0.05),
         v5Min: envNum('CONT_V5_MIN', 0.01),
         v15Min: envNum('CONT_V15_MIN', 0.02),
